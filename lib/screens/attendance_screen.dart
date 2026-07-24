@@ -29,7 +29,10 @@ class AttendanceScreen extends StatelessWidget {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => AttendanceDetailScreen(record: record),
+        builder: (context) => AttendanceDetailScreen(
+          record: record,
+          selectedClass: selectedClass,
+        ),
       ),
     );
   }

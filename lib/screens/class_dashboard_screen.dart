@@ -1,14 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../models/announcement.dart';
-import '../models/attendance_record.dart';
-import '../models/grade.dart';
-import '../models/homework.dart';
 import '../state/app_store.dart';
-import 'announcement_create_screen.dart';
-import 'attendance_take_screen.dart';
-import 'grade_create_screen.dart';
-import 'homework_create_screen.dart';
+import 'class_journal_screen.dart';
 import 'student_list_screen.dart';
 
 class ClassDashboardScreen extends StatefulWidget {
@@ -41,60 +34,6 @@ class _ClassDashboardScreenState extends State<ClassDashboardScreen> {
     Navigator.pop(context);
   }
 
-  Future<void> _openAttendance() async {
-    final result = await Navigator.push<AttendanceRecord>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AttendanceTakeScreen(
-          selectedClass: widget.selectedClass,
-          store: widget.store,
-        ),
-      ),
-    );
-
-    if (!mounted || result == null) return;
-
-    setState(() {
-      _recentActivities.insert(0, 'Өнөөдрийн ирц бүртгэлээ');
-    });
-  }
-
-  Future<void> _openHomeworkCreate() async {
-    final result = await Navigator.push<Homework>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => HomeworkCreateScreen(
-          className: widget.selectedClass,
-          store: widget.store,
-        ),
-      ),
-    );
-
-    if (!mounted || result == null) return;
-
-    setState(() {
-      _recentActivities.insert(0, '${result.subject}-ийн даалгавар нэмлээ');
-    });
-  }
-
-  Future<void> _openAnnouncementCreate() async {
-    final result = await Navigator.push<Announcement>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AnnouncementCreateScreen(
-          className: widget.selectedClass,
-          store: widget.store,
-        ),
-      ),
-    );
-
-    if (!mounted || result == null) return;
-
-    setState(() {
-      _recentActivities.insert(0, '${result.title} зарлал');
-    });
-  }
-
   Future<void> _openStudents() async {
     await Navigator.push(
       context,
@@ -107,22 +46,16 @@ class _ClassDashboardScreenState extends State<ClassDashboardScreen> {
     );
   }
 
-  Future<void> _openGradeInput() async {
-    final result = await Navigator.push<Grade>(
+  Future<void> _openJournal() async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => GradeCreateScreen(
-          className: widget.selectedClass,
+        builder: (context) => ClassJournalScreen(
+          selectedClass: widget.selectedClass,
           store: widget.store,
         ),
       ),
     );
-
-    if (!mounted || result == null) return;
-
-    setState(() {
-      _recentActivities.insert(0, '${result.subject} дүн орууллаа');
-    });
   }
 
   @override
@@ -163,28 +96,10 @@ class _ClassDashboardScreenState extends State<ClassDashboardScreen> {
           onTap: _openStudents,
         ),
         _ActionCard(
-          title: 'Өнөөдрийн ирц авах',
-          icon: Icons.fact_check,
-          color: Colors.green,
-          onTap: _openAttendance,
-        ),
-        _ActionCard(
-          title: 'Шинэ даалгавар',
-          icon: Icons.assignment_add,
-          color: Colors.orange,
-          onTap: _openHomeworkCreate,
-        ),
-        _ActionCard(
-          title: 'Шинэ зарлал',
-          icon: Icons.campaign,
-          color: Colors.blue,
-          onTap: _openAnnouncementCreate,
-        ),
-        _ActionCard(
-          title: 'Дүн оруулах',
-          icon: Icons.grade,
-          color: Colors.purple,
-          onTap: _openGradeInput,
+          title: 'Хичээлийн журнал',
+          icon: Icons.menu_book,
+          color: Colors.indigo,
+          onTap: _openJournal,
         ),
         const SizedBox(height: 16),
         Text(

@@ -34,6 +34,8 @@ class AppStore extends ChangeNotifier {
   late final List<Grade> _grades;
   late final Map<String, List<AttendanceRecord>> _attendanceByClass;
   late final Map<String, List<Student>> _studentsByClass;
+  final Map<String, String?> _journalSubjectByClass = {};
+  final Map<String, String?> _journalTermByClass = {};
   int _studentIdCounter = 1000;
 
   List<Announcement> announcementsFor(String className) {
@@ -66,6 +68,23 @@ class AppStore extends ChangeNotifier {
     );
   }
 
+  String? journalSubjectFor(String className) =>
+      _journalSubjectByClass[className];
+
+  String? journalTermFor(String className) => _journalTermByClass[className];
+
+  void setJournalSubject(String className, String? subject) {
+    if (_journalSubjectByClass[className] == subject) return;
+    _journalSubjectByClass[className] = subject;
+    notifyListeners();
+  }
+
+  void setJournalTerm(String className, String? term) {
+    if (_journalTermByClass[className] == term) return;
+    _journalTermByClass[className] = term;
+    notifyListeners();
+  }
+
   String nextStudentId(String className) {
     _studentIdCounter += 1;
     return '$className-$_studentIdCounter';
@@ -83,6 +102,12 @@ class AppStore extends ChangeNotifier {
 
   void addGrade(Grade grade) {
     _grades.insert(0, grade);
+    notifyListeners();
+  }
+
+  void addGrades(List<Grade> grades) {
+    if (grades.isEmpty) return;
+    _grades.insertAll(0, grades);
     notifyListeners();
   }
 

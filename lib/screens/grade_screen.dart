@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/grade.dart';
 import '../state/app_store.dart';
+import 'bulk_grade_entry_screen.dart';
 import 'grade_create_screen.dart';
 
 class GradeScreen extends StatelessWidget {
@@ -20,6 +21,16 @@ class GradeScreen extends StatelessWidget {
       MaterialPageRoute(
         builder: (context) =>
             GradeCreateScreen(className: selectedClass, store: store),
+      ),
+    );
+  }
+
+  Future<void> _openBulkEntryScreen(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            BulkGradeEntryScreen(selectedClass: selectedClass, store: store),
       ),
     );
   }
@@ -44,10 +55,19 @@ class GradeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
+              onPressed: () => _openBulkEntryScreen(context),
+              icon: const Icon(Icons.groups),
+              label: const Text('Ангийн дүн оруулах'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
               onPressed: () => _openCreateScreen(context),
               icon: const Icon(Icons.add),
               label: const Text('Дүн оруулах'),
-              style: FilledButton.styleFrom(
+              style: OutlinedButton.styleFrom(
                 minimumSize: const Size.fromHeight(48),
               ),
             ),

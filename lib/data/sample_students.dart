@@ -10,6 +10,7 @@ const sampleStudentsByClass = <String, List<Student>>{
       gender: StudentGender.male,
       register: 'УБ00112233',
       phone: '99112233',
+      guardian: 'Батбаяр Дорж',
     ),
     Student(
       id: '10a-2',
@@ -17,6 +18,7 @@ const sampleStudentsByClass = <String, List<Student>>{
       lastName: 'Болор',
       firstName: 'Маа',
       gender: StudentGender.female,
+      guardian: 'Болорцэцэг Ариун',
     ),
     Student(
       id: '10a-3',
@@ -32,6 +34,7 @@ const sampleStudentsByClass = <String, List<Student>>{
       firstName: 'Жин',
       gender: StudentGender.female,
       phone: '88001122',
+      guardian: 'Энхтуяа Саран',
     ),
     Student(
       id: '10a-5',
@@ -48,6 +51,9 @@ const sampleStudentsByClass = <String, List<Student>>{
       lastName: 'Амар',
       firstName: 'Сайхан',
       gender: StudentGender.male,
+      register: 'УБ99887766',
+      phone: '99001122',
+      guardian: 'Амаржаргал Бат',
     ),
     Student(
       id: '6a-2',
@@ -55,6 +61,7 @@ const sampleStudentsByClass = <String, List<Student>>{
       lastName: 'Сараа',
       firstName: 'Цэцэг',
       gender: StudentGender.female,
+      guardian: 'Сарантуяа Оюун',
     ),
   ],
 };

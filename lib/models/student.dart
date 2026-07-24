@@ -21,6 +21,7 @@ class Student {
     required this.gender,
     this.register,
     this.phone,
+    this.guardian,
   });
 
   final String id;
@@ -30,6 +31,7 @@ class Student {
   final StudentGender gender;
   final String? register;
   final String? phone;
+  final String? guardian;
 
   String get fullName => '$lastName $firstName';
 
@@ -39,8 +41,10 @@ class Student {
     StudentGender? gender,
     String? register,
     String? phone,
+    String? guardian,
     bool clearRegister = false,
     bool clearPhone = false,
+    bool clearGuardian = false,
   }) {
     return Student(
       id: id,
@@ -50,6 +54,7 @@ class Student {
       gender: gender ?? this.gender,
       register: clearRegister ? null : (register ?? this.register),
       phone: clearPhone ? null : (phone ?? this.phone),
+      guardian: clearGuardian ? null : (guardian ?? this.guardian),
     );
   }
 

@@ -119,4 +119,37 @@ class AttendanceRecord {
     lateCount: lateCount,
     absentCount: absentCount,
   );
+
+  static final RegExp _mongolianDatePattern = RegExp(
+    r'^(\d+)\s*оны\s*(\d+)\s*сарын\s*(\d+)$',
+  );
+
+  /// Parses dates like `2026 оны 7 сарын 24` into a calendar day (no time).
+  static DateTime? tryParseCalendarDate(String rawDate) {
+    final match = _mongolianDatePattern.firstMatch(rawDate.trim());
+    if (match == null) return null;
+    return DateTime(
+      int.parse(match.group(1)!),
+      int.parse(match.group(2)!),
+      int.parse(match.group(3)!),
+    );
+  }
+
+  /// Compares only year/month/day (ignores time-of-day).
+  bool isOnCalendarDay(DateTime day) {
+    final target = DateTime(day.year, day.month, day.day);
+    final trimmed = date.trim();
+    if (trimmed == 'Өнөөдөр') {
+      final now = DateTime.now();
+      return target.year == now.year &&
+          target.month == now.month &&
+          target.day == now.day;
+    }
+
+    final parsed = tryParseCalendarDate(date);
+    if (parsed == null) return false;
+    return parsed.year == target.year &&
+        parsed.month == target.month &&
+        parsed.day == target.day;
+  }
 }

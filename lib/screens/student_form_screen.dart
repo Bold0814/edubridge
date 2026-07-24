@@ -27,6 +27,7 @@ class _StudentFormScreenState extends State<StudentFormScreen> {
   late final TextEditingController _firstNameController;
   late final TextEditingController _registerController;
   late final TextEditingController _phoneController;
+  late final TextEditingController _guardianController;
 
   StudentGender? _gender;
 
@@ -40,6 +41,7 @@ class _StudentFormScreenState extends State<StudentFormScreen> {
     );
     _registerController = TextEditingController(text: student?.register ?? '');
     _phoneController = TextEditingController(text: student?.phone ?? '');
+    _guardianController = TextEditingController(text: student?.guardian ?? '');
     _gender = student?.gender;
   }
 
@@ -49,6 +51,7 @@ class _StudentFormScreenState extends State<StudentFormScreen> {
     _firstNameController.dispose();
     _registerController.dispose();
     _phoneController.dispose();
+    _guardianController.dispose();
     super.dispose();
   }
 
@@ -57,6 +60,7 @@ class _StudentFormScreenState extends State<StudentFormScreen> {
 
     final register = _registerController.text.trim();
     final phone = _phoneController.text.trim();
+    final guardian = _guardianController.text.trim();
 
     if (widget.isEditing) {
       final updated = widget.student!.copyWith(
@@ -65,8 +69,10 @@ class _StudentFormScreenState extends State<StudentFormScreen> {
         gender: _gender,
         register: register.isEmpty ? null : register,
         phone: phone.isEmpty ? null : phone,
+        guardian: guardian.isEmpty ? null : guardian,
         clearRegister: register.isEmpty,
         clearPhone: phone.isEmpty,
+        clearGuardian: guardian.isEmpty,
       );
       widget.store.updateStudent(updated);
     } else {
@@ -78,6 +84,7 @@ class _StudentFormScreenState extends State<StudentFormScreen> {
         gender: _gender!,
         register: register.isEmpty ? null : register,
         phone: phone.isEmpty ? null : phone,
+        guardian: guardian.isEmpty ? null : guardian,
       );
       widget.store.addStudent(student);
     }
@@ -178,8 +185,18 @@ class _StudentFormScreenState extends State<StudentFormScreen> {
             TextFormField(
               controller: _phoneController,
               keyboardType: TextInputType.phone,
+              textInputAction: TextInputAction.next,
               decoration: const InputDecoration(
                 labelText: 'Утас (заавал биш)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _guardianController,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(
+                labelText: 'Асран хамгаалагч (заавал биш)',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -189,7 +206,7 @@ class _StudentFormScreenState extends State<StudentFormScreen> {
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(48),
               ),
-              child: Text(widget.isEditing ? 'Хадгалах' : 'Сурагч нэмэх'),
+              child: Text(widget.isEditing ? 'Хадгалах' : '➕ Сурагч нэмэх'),
             ),
           ],
         ),

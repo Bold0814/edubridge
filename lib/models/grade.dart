@@ -30,7 +30,7 @@ class Grade {
 
   static String? tryLetterFromScoreText(String scoreText) {
     final value = num.tryParse(scoreText.trim());
-    if (value == null) return null;
+    if (value == null || value < 0 || value > 100) return null;
     return letterFromScore(value);
   }
 

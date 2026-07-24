@@ -8,10 +8,12 @@ class HomeworkCreateScreen extends StatefulWidget {
     super.key,
     required this.className,
     required this.store,
+    this.initialSubject,
   });
 
   final String className;
   final AppStore store;
+  final String? initialSubject;
 
   @override
   State<HomeworkCreateScreen> createState() => _HomeworkCreateScreenState();
@@ -46,6 +48,10 @@ class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
     super.initState();
     _selectedDate = DateTime.now();
     _dueDateController.text = _formatMongolianDate(_selectedDate);
+    final initial = widget.initialSubject;
+    if (initial != null && _subjects.contains(initial)) {
+      _selectedSubject = initial;
+    }
   }
 
   @override

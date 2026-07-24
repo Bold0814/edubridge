@@ -15,6 +15,8 @@ void main() {
 
     expect(find.text('Нүүр'), findsWidgets);
     expect(find.text('6А анги'), findsWidgets);
-    expect(find.text('Өнөөдрийн ирц авах'), findsOneWidget);
+    expect(find.text('Сурагчид'), findsOneWidget);
+    expect(find.text('Хичээлийн журнал'), findsOneWidget);
+    expect(find.text('Сүүлийн үйл ажиллагаа'), findsOneWidget);
   });
 }

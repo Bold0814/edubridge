@@ -41,7 +41,7 @@ class StudentListScreen extends StatelessWidget {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Устгах'),
+              child: const Text('🗑️ Устгах'),
             ),
           ],
         );
@@ -82,7 +82,7 @@ class StudentListScreen extends StatelessWidget {
               FilledButton.icon(
                 onPressed: () => _openForm(context),
                 icon: const Icon(Icons.person_add),
-                label: const Text('Сурагч нэмэх'),
+                label: const Text('➕ Сурагч нэмэх'),
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(48),
                 ),
@@ -91,55 +91,62 @@ class StudentListScreen extends StatelessWidget {
               if (students.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 32),
-                  child: Center(child: Text('Энэ ангид сурагч байхгүй байна.')),
+                  child: Center(
+                    child: Text('Энэ ангид сурагч бүртгэлгүй байна.'),
+                  ),
                 )
               else
                 ...students.map((student) {
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      leading: Icon(
-                        student.gender == StudentGender.male
-                            ? Icons.man
-                            : Icons.woman,
-                        color: theme.colorScheme.primary,
-                      ),
-                      title: Text(
-                        student.fullName,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: Column(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const SizedBox(height: 4),
-                          Text(student.gender.label),
-                          if (student.register != null)
-                            Text('Регистр: ${student.register}'),
-                          if (student.phone != null)
-                            Text('Утас: ${student.phone}'),
-                        ],
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
+                          Icon(
+                            student.gender == StudentGender.male
+                                ? Icons.man
+                                : Icons.woman,
+                            color: theme.colorScheme.primary,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  student.fullName,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Регистр: ${student.register?.isNotEmpty == true ? student.register! : '—'}',
+                                ),
+                                Text(
+                                  'Утас: ${student.phone?.isNotEmpty == true ? student.phone! : '—'}',
+                                ),
+                                Text(
+                                  'Асран хамгаалагч: ${student.guardian?.isNotEmpty == true ? student.guardian! : '—'}',
+                                ),
+                              ],
+                            ),
+                          ),
                           IconButton(
-                            tooltip: 'Засах',
+                            tooltip: '✏️ Засах',
                             onPressed: () =>
                                 _openForm(context, student: student),
                             icon: const Icon(Icons.edit),
                           ),
                           IconButton(
-                            tooltip: 'Устгах',
+                            tooltip: '🗑️ Устгах',
                             onPressed: () => _confirmDelete(context, student),
                             icon: const Icon(Icons.delete_outline),
                           ),
                         ],
                       ),
-                      isThreeLine: true,
                     ),
                   );
                 }),

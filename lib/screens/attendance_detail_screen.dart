@@ -3,16 +3,21 @@ import 'package:flutter/material.dart';
 import '../models/attendance_record.dart';
 
 class AttendanceDetailScreen extends StatelessWidget {
-  const AttendanceDetailScreen({super.key, required this.record});
+  const AttendanceDetailScreen({
+    super.key,
+    required this.record,
+    required this.selectedClass,
+  });
 
   final AttendanceRecord record;
+  final String selectedClass;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final classLabel = record.className.isEmpty
-        ? 'Анги'
-        : '${record.className} анги';
+    final className = record.className.isNotEmpty
+        ? record.className
+        : selectedClass;
 
     return Scaffold(
       appBar: AppBar(
@@ -23,7 +28,7 @@ class AttendanceDetailScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            classLabel,
+            '$className анги',
             style: theme.textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.bold,
             ),

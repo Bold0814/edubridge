@@ -9,10 +9,16 @@ class GradeCreateScreen extends StatefulWidget {
     super.key,
     required this.className,
     required this.store,
+    this.initialStudent,
+    this.initialSubject,
+    this.initialTerm,
   });
 
   final String className;
   final AppStore store;
+  final Student? initialStudent;
+  final String? initialSubject;
+  final String? initialTerm;
 
   @override
   State<GradeCreateScreen> createState() => _GradeCreateScreenState();
@@ -31,25 +37,43 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
     'Мэдээллийн технологи',
   ];
 
+  static const _terms = [
+    '1-р улирал',
+    '2-р улирал',
+    '3-р улирал',
+    '4-р улирал',
+  ];
+
   final _formKey = GlobalKey<FormState>();
   final _scoreController = TextEditingController();
-  final _termController = TextEditingController(text: '1-р улирал');
 
   Student? _selectedStudent;
   String? _selectedSubject;
+  String? _selectedTerm;
   String? _previewLetter;
 
   @override
   void initState() {
     super.initState();
     _scoreController.addListener(_updateLetterPreview);
+    final initialStudent = widget.initialStudent;
+    if (initialStudent != null) {
+      _selectedStudent = initialStudent;
+    }
+    final initialSubject = widget.initialSubject;
+    if (initialSubject != null && _subjects.contains(initialSubject)) {
+      _selectedSubject = initialSubject;
+    }
+    final initialTerm = widget.initialTerm;
+    if (initialTerm != null && _terms.contains(initialTerm)) {
+      _selectedTerm = initialTerm;
+    }
   }
 
   @override
   void dispose() {
     _scoreController.removeListener(_updateLetterPreview);
     _scoreController.dispose();
-    _termController.dispose();
     super.dispose();
   }
 
@@ -71,7 +95,7 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
       studentName: student.fullName,
       subject: _selectedSubject!,
       score: scoreText,
-      term: _termController.text.trim(),
+      term: _selectedTerm!,
       letterGrade: Grade.letterFromScore(num.parse(scoreText)),
     );
 
@@ -110,6 +134,7 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
                 ),
               ),
             DropdownButtonFormField<Student>(
+              key: ValueKey('grade-student-${_selectedStudent?.id}'),
               initialValue: _selectedStudent,
               isExpanded: true,
               decoration: const InputDecoration(
@@ -141,6 +166,7 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
+              key: ValueKey('grade-subject-$_selectedSubject'),
               initialValue: _selectedSubject,
               isExpanded: true,
               decoration: const InputDecoration(
@@ -191,15 +217,30 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
               },
             ),
             const SizedBox(height: 16),
-            TextFormField(
-              controller: _termController,
+            DropdownButtonFormField<String>(
+              key: ValueKey('grade-term-$_selectedTerm'),
+              initialValue: _selectedTerm,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Улирал',
                 border: OutlineInputBorder(),
               ),
+              hint: const Text('Улирал сонгох'),
+              icon: const Icon(Icons.arrow_drop_down),
+              items: _terms
+                  .map(
+                    (term) => DropdownMenuItem<String>(
+                      value: term,
+                      child: Text(term, overflow: TextOverflow.ellipsis),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                setState(() => _selectedTerm = value);
+              },
               validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Улирал оруулна уу';
+                if (value == null || value.isEmpty) {
+                  return 'Улирлаа сонгоно уу';
                 }
                 return null;
               },
