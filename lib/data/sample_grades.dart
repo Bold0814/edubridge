@@ -1,0 +1,68 @@
+import '../models/grade.dart';
+
+const sampleGradeList = [
+  Grade(
+    className: '10А',
+    studentId: '10a-1',
+    studentName: 'Бат Эрдэнэ',
+    subject: 'Математик',
+    score: '95',
+    term: '1-р улирал',
+  ),
+  Grade(
+    className: '10А',
+    studentId: '10a-2',
+    studentName: 'Болор Маа',
+    subject: 'Монгол хэл',
+    score: '88',
+    term: '1-р улирал',
+  ),
+  Grade(
+    className: '10А',
+    studentId: '10a-3',
+    studentName: 'Наран Сүх',
+    subject: 'Англи хэл',
+    score: '92',
+    term: '1-р улирал',
+  ),
+  Grade(
+    className: '10А',
+    studentId: '10a-1',
+    studentName: 'Бат Эрдэнэ',
+    subject: 'Байгалийн ухаан',
+    score: '90',
+    term: '1-р улирал',
+  ),
+  Grade(
+    className: '10А',
+    studentId: '10a-4',
+    studentName: 'Энх Жин',
+    subject: 'Түүх',
+    score: '85',
+    term: '1-р улирал',
+  ),
+  Grade(
+    className: '10А',
+    studentId: '10a-5',
+    studentName: 'Тэмүү Лэн',
+    subject: 'Хөгжим',
+    score: '94',
+    term: '1-р улирал',
+  ),
+  Grade(
+    className: '6А',
+    studentId: '6a-1',
+    studentName: 'Амар Сайхан',
+    subject: 'Математик',
+    score: '90',
+    term: '1-р улирал',
+  ),
+  Grade(
+    className: '6А',
+    studentId: '6a-2',
+    studentName: 'Сараа Цэцэг',
+    subject: 'Монгол хэл',
+    score: '87',
+    term: '1-р улирал',
+  ),
+];
