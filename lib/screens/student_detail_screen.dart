@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/announcement.dart';
@@ -6,57 +7,178 @@ import '../models/grade.dart';
 import '../models/homework.dart';
 import '../models/student.dart';
 import '../state/app_store.dart';
-import 'attendance_take_screen.dart';
-import 'grade_create_screen.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_theme.dart';
 import 'homework_screen.dart';
+import 'student_grade_detail_screen.dart';
+import 'student_login_provision_screen.dart';
 
-class StudentDetailScreen extends StatelessWidget {
+class StudentDetailScreen extends StatefulWidget {
   const StudentDetailScreen({
     super.key,
     required this.studentId,
     required this.selectedClass,
     required this.store,
+    this.selectedSubject,
+    this.subjectId,
+    this.selectedTerm,
   });
 
   final String studentId;
   final String selectedClass;
   final AppStore store;
+  final String? selectedSubject;
+  final int? subjectId;
+  final String? selectedTerm;
 
-  Future<void> _openAttendance(BuildContext context) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) =>
-            AttendanceTakeScreen(selectedClass: selectedClass, store: store),
-      ),
+  @override
+  State<StudentDetailScreen> createState() => _StudentDetailScreenState();
+}
+
+class _StudentDetailScreenState extends State<StudentDetailScreen> {
+  final _scrollController = ScrollController();
+  final _attendanceKey = GlobalKey();
+  final _gradesKey = GlobalKey();
+  final _homeworkKey = GlobalKey();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _scrollTo(GlobalKey key) async {
+    final targetContext = key.currentContext;
+    if (targetContext == null) return;
+    await Scrollable.ensureVisible(
+      targetContext,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+      alignment: 0.05,
     );
   }
 
-  Future<void> _openGradeEdit(BuildContext context, Student student) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => GradeCreateScreen(
-          className: selectedClass,
-          store: store,
-          initialStudent: student,
-          initialSubject: store.journalSubjectFor(selectedClass),
-          initialTerm: store.journalTermFor(selectedClass),
-        ),
-      ),
+  int? get _effectiveSubjectId =>
+      widget.subjectId ?? widget.store.activeContext.subjectId;
+
+  String? get _effectiveSubjectName {
+    final id = _effectiveSubjectId;
+    if (id != null) {
+      return widget.store.subjectById(id)?.name;
+    }
+    final named = widget.selectedSubject?.trim();
+    if (named == null || named.isEmpty) return null;
+    return named;
+  }
+
+  String? get _effectiveTerm {
+    final selected = widget.selectedTerm?.trim();
+    if (selected != null && selected.isNotEmpty) return selected;
+    final journal = widget.store.journalTermFor(widget.selectedClass)?.trim();
+    if (journal == null || journal.isEmpty) return null;
+    return journal;
+  }
+
+  List<Grade> _gradesForSummary(Student student) {
+    return widget.store.gradesForStudentContext(
+      className: widget.selectedClass,
+      studentId: student.id,
+      subjectId: _effectiveSubjectId,
+      subjectName: _effectiveSubjectId == null ? _effectiveSubjectName : null,
+      term: _effectiveTerm,
     );
   }
 
-  Future<void> _openHomework(BuildContext context) async {
-    await Navigator.push(
+  bool _requireContext({required bool needStudent, required bool needClass}) {
+    final missing = <String>[];
+    if (widget.store.activeSchoolId == null) missing.add('schoolId');
+    if (needClass && widget.selectedClass.trim().isEmpty) {
+      missing.add('classId');
+    }
+    if (needStudent && widget.studentId.trim().isEmpty) {
+      missing.add('studentId');
+    }
+    if (missing.isEmpty) return true;
+    if (kDebugMode) {
+      debugPrint('StudentDetail missing context: ${missing.join(', ')}');
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Мэдээлэл ачаалахад шаардлагатай сонголт дутуу байна.'),
+      ),
+    );
+    return false;
+  }
+
+  Future<void> _onAttendanceAction() => _scrollTo(_attendanceKey);
+
+  Future<void> _onGradesAction() async {
+    if (!_requireContext(needStudent: true, needClass: true)) return;
+
+    Student? student;
+    for (final item in widget.store.studentsFor(widget.selectedClass)) {
+      if (item.id == widget.studentId) {
+        student = item;
+        break;
+      }
+    }
+    if (student == null) {
+      if (kDebugMode) debugPrint('StudentDetail grades: student not found');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Мэдээлэл ачаалахад шаардлагатай сонголт дутуу байна.'),
+        ),
+      );
+      return;
+    }
+
+    final target = student;
+    if (kDebugMode) {
+      final preview = _gradesForSummary(target);
+      debugPrint(
+        'StudentDetail → grades '
+        'schoolId=${widget.store.activeSchoolId} '
+        'classId=${widget.selectedClass} '
+        'studentId=${target.id} '
+        'subjectId=$_effectiveSubjectId '
+        'subjectName=$_effectiveSubjectName '
+        'term=$_effectiveTerm '
+        'matchCount=${preview.length}',
+      );
+    }
+
+    await Navigator.push<void>(
       context,
       MaterialPageRoute(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text('Даалгавар'), centerTitle: true),
-          body: HomeworkScreen(selectedClass: selectedClass, store: store),
+        builder: (context) => StudentGradeDetailScreen(
+          store: widget.store,
+          student: target,
+          schoolId: widget.store.activeSchoolId,
+          classId: widget.selectedClass,
+          subjectId: _effectiveSubjectId,
+          subjectName: _effectiveSubjectName,
+          term: _effectiveTerm,
         ),
       ),
     );
+    if (!context.mounted) return;
+  }
+
+  Future<void> _onHomeworkAction() async {
+    if (!_requireContext(needStudent: true, needClass: true)) return;
+
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => HomeworkScreen(
+          selectedClass: widget.selectedClass,
+          store: widget.store,
+          subjectId: _effectiveSubjectId,
+        ),
+      ),
+    );
+    if (!context.mounted) return;
   }
 
   _AttendanceSummary _attendanceSummary(
@@ -66,10 +188,14 @@ class StudentDetailScreen extends StatelessWidget {
     var present = 0;
     var late = 0;
     var absent = 0;
+    final history = <_AttendanceHistoryItem>[];
 
     for (final record in records) {
       if (!record.hasStudentDetails) continue;
-      for (final entry in record.entries!) {
+      final entries = record.entries;
+      if (entries == null) continue;
+
+      for (final entry in entries) {
         if (entry.studentName != student.fullName) continue;
         switch (entry.status) {
           case AttendanceStatus.present:
@@ -79,22 +205,51 @@ class StudentDetailScreen extends StatelessWidget {
           case AttendanceStatus.absent:
             absent += 1;
         }
+        history.add(
+          _AttendanceHistoryItem(date: record.date, status: entry.status),
+        );
       }
     }
 
-    return _AttendanceSummary(present: present, late: late, absent: absent);
+    return _AttendanceSummary(
+      present: present,
+      late: late,
+      absent: absent,
+      history: history,
+    );
   }
 
   List<Grade> _latestGradesBySubject(Student student, List<Grade> grades) {
     final latestBySubject = <String, Grade>{};
     for (final grade in grades) {
-      if (grade.className != selectedClass) continue;
-      if (grade.studentId != student.id) continue;
       latestBySubject.putIfAbsent(grade.subject, () => grade);
     }
     final result = latestBySubject.values.toList()
       ..sort((a, b) => a.subject.compareTo(b.subject));
     return result;
+  }
+
+  String _averageGradeLabel(List<Grade> grades) {
+    final average = widget.store.averageScore(grades);
+    if (average == null) return '—';
+    return average.round().toString();
+  }
+
+  List<Homework> _displayHomework(List<Homework> classHomework) {
+    final subject = _effectiveSubjectName?.trim();
+    final Iterable<Homework> preferred;
+    if (subject != null && subject.isNotEmpty) {
+      preferred = classHomework.where((item) => item.subject.trim() == subject);
+    } else {
+      preferred = classHomework;
+    }
+    return preferred.take(3).toList(growable: false);
+  }
+
+  List<Announcement> _displayAnnouncements(
+    List<Announcement> classAnnouncements,
+  ) {
+    return classAnnouncements.take(3).toList(growable: false);
   }
 
   @override
@@ -107,12 +262,12 @@ class StudentDetailScreen extends StatelessWidget {
         centerTitle: true,
       ),
       body: ListenableBuilder(
-        listenable: store,
+        listenable: widget.store,
         builder: (context, _) {
-          final students = store.studentsFor(selectedClass);
+          final students = widget.store.studentsFor(widget.selectedClass);
           Student? student;
           for (final item in students) {
-            if (item.id == studentId) {
+            if (item.id == widget.studentId) {
               student = item;
               break;
             }
@@ -123,126 +278,241 @@ class StudentDetailScreen extends StatelessWidget {
           }
 
           final currentStudent = student;
-          final attendance = store.attendanceFor(selectedClass);
-          final grades = store.gradesFor(selectedClass);
-          final homework = store.homeworkFor(selectedClass);
-          final announcements = store.announcementsFor(selectedClass);
+          final attendance = widget.store.attendanceFor(widget.selectedClass);
+          final grades = _gradesForSummary(currentStudent);
+          final homework = widget.store.homeworkFor(
+            widget.selectedClass,
+            subjectId: _effectiveSubjectId,
+            subjectName: _effectiveSubjectId == null
+                ? _effectiveSubjectName
+                : null,
+          );
+          final announcements = widget.store.announcementsFor(
+            widget.selectedClass,
+          );
           final summary = _attendanceSummary(currentStudent, attendance);
           final latestGrades = _latestGradesBySubject(currentStudent, grades);
+          final visibleHomework = _displayHomework(homework);
+          final visibleAnnouncements = _displayAnnouncements(announcements);
+          final averageGrade = _averageGradeLabel(grades);
+          final guardian = currentStudent.guardian?.trim();
+          final phone = currentStudent.phone?.trim();
+          final subject = _effectiveSubjectName;
+          final term = _effectiveTerm;
 
           return ListView(
-            padding: const EdgeInsets.all(16),
+            controller: _scrollController,
+            padding: const EdgeInsets.all(AppSpacing.page),
             children: [
               Text(
                 currentStudent.fullName,
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                style: theme.textTheme.headlineSmall,
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.itemSm),
               Text(
-                '$selectedClass анги',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                '${widget.selectedClass} анги',
+                style: theme.textTheme.bodySmall,
+              ),
+              if (guardian != null && guardian.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.item),
+                Text('Асран хамгаалагч: $guardian'),
+              ],
+              if (phone != null && phone.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.itemSm),
+                Text('Утас: $phone'),
+              ],
+              if (widget.store.canViewStudentCode(currentStudent.id) &&
+                  (currentStudent.studentCode?.isNotEmpty ?? false)) ...[
+                const SizedBox(height: AppSpacing.gap),
+                Text(
+                  'Сурагчийн код: ${currentStudent.studentCode}',
+                  style: theme.textTheme.titleSmall,
+                ),
+              ],
+              if (widget.store.canManageStudents &&
+                  widget.store.accountForStudentId(currentStudent.id) ==
+                      null) ...[
+                const SizedBox(height: AppSpacing.gap),
+                OutlinedButton(
+                  onPressed: () async {
+                    await Navigator.push<void>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => StudentLoginProvisionScreen(
+                          store: widget.store,
+                          studentId: currentStudent.id,
+                        ),
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  child: const Text('Нэвтрэх эрх үүсгэх'),
+                ),
+              ],
+              if ((subject != null && subject.isNotEmpty) ||
+                  (term != null && term.isNotEmpty)) ...[
+                const SizedBox(height: AppSpacing.gap),
+                Wrap(
+                  spacing: AppSpacing.item,
+                  runSpacing: AppSpacing.item,
+                  children: [
+                    if (subject != null && subject.isNotEmpty)
+                      Chip(label: Text(subject)),
+                    if (term != null && term.isNotEmpty)
+                      Chip(label: Text(term)),
+                  ],
+                ),
+              ],
+              const SizedBox(height: AppSpacing.gap),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.card),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Ирцийн хувь',
+                              style: theme.textTheme.titleSmall,
+                            ),
+                          ),
+                          Text(
+                            summary.percentageLabel,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: AppColors.present,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.item),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusSm,
+                        ),
+                        child: LinearProgressIndicator(
+                          value: summary.progress,
+                          minHeight: AppSpacing.progressHeight,
+                          backgroundColor: AppColors.outlineSubtle,
+                          color: AppColors.present,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.gap),
+                      Text(
+                        'Дундаж дүн: $averageGrade',
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: AppColors.grade,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.itemSm),
+                      Text('Даалгаврын тоо: ${homework.length}'),
+                      Text('Зарлалын тоо: ${announcements.length}'),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.sectionSm),
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final width = (constraints.maxWidth - 8) / 2;
+                  final width = (constraints.maxWidth - AppSpacing.item) / 2;
                   return Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                    spacing: AppSpacing.item,
+                    runSpacing: AppSpacing.item,
                     children: [
-                      SizedBox(
+                      _QuickActionButton(
                         width: width,
-                        height: 48,
-                        child: FilledButton.tonalIcon(
-                          onPressed: () => _openAttendance(context),
-                          icon: const Icon(Icons.fact_check, size: 20),
-                          label: const Text(
-                            'Ирц засах',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+                        icon: Icons.fact_check,
+                        label: 'Ирц харах',
+                        onPressed: _onAttendanceAction,
                       ),
-                      SizedBox(
+                      _QuickActionButton(
                         width: width,
-                        height: 48,
-                        child: FilledButton.tonalIcon(
-                          onPressed: () =>
-                              _openGradeEdit(context, currentStudent),
-                          icon: const Icon(Icons.grade, size: 20),
-                          label: const Text(
-                            'Дүн засах',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+                        icon: Icons.grade,
+                        label: 'Дүн харах',
+                        onPressed: _onGradesAction,
                       ),
-                      SizedBox(
+                      _QuickActionButton(
                         width: width,
-                        height: 48,
-                        child: FilledButton.tonalIcon(
-                          onPressed: () => _openHomework(context),
-                          icon: const Icon(Icons.assignment, size: 20),
-                          label: const Text(
-                            'Даалгавар харах',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+                        icon: Icons.assignment,
+                        label: 'Даалгавар харах',
+                        onPressed: _onHomeworkAction,
                       ),
                     ],
                   );
                 },
               ),
-              const SizedBox(height: 24),
-              Text(
-                'Ирц',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
+              const SizedBox(height: AppSpacing.section),
+              KeyedSubtree(
+                key: _attendanceKey,
+                child: const _SectionTitle(title: 'Ирц'),
+              ),
+              const SizedBox(height: AppSpacing.item),
+              if (summary.total == 0)
+                const Text('Мэдээлэл байхгүй')
+              else ...[
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppSpacing.card),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Нийт бүртгэл: ${summary.total}'),
+                        const SizedBox(height: AppSpacing.item),
+                        Wrap(
+                          spacing: AppSpacing.item,
+                          runSpacing: AppSpacing.item,
+                          children: [
+                            StatusBadge(
+                              label: 'Ирсэн: ${summary.present}',
+                              color: AppColors.present,
+                            ),
+                            StatusBadge(
+                              label: 'Хоцорсон: ${summary.late}',
+                              color: AppColors.late,
+                            ),
+                            StatusBadge(
+                              label: 'Тасалсан: ${summary.absent}',
+                              color: AppColors.absent,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
+                const SizedBox(height: AppSpacing.gap),
+                Text('Сүүлийн ирц', style: theme.textTheme.titleSmall),
+                const SizedBox(height: AppSpacing.item),
+                ...summary.history.take(10).map((item) {
+                  return Card(
+                    child: ListTile(
+                      dense: true,
+                      title: Text(item.date),
+                      trailing: StatusBadge(
+                        label: item.status.label,
+                        color: item.status.color,
+                        compact: true,
+                      ),
+                    ),
+                  );
+                }),
+              ],
+              const SizedBox(height: AppSpacing.section),
+              KeyedSubtree(
+                key: _gradesKey,
+                child: const _SectionTitle(title: 'Дүн'),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Ирцийн хувь: ${summary.percentageLabel}',
-                style: theme.textTheme.titleMedium,
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _StatChip(
-                    label: 'Ирсэн',
-                    count: summary.present,
-                    color: Colors.green,
-                  ),
-                  _StatChip(
-                    label: 'Хоцорсон',
-                    count: summary.late,
-                    color: Colors.orange,
-                  ),
-                  _StatChip(
-                    label: 'Тасалсан',
-                    count: summary.absent,
-                    color: Colors.red,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Сүүлийн дүн (хичээлээр)',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.item),
               if (latestGrades.isEmpty)
                 const Text('Дүн бүртгэгдээгүй')
               else
                 ...latestGrades.map((grade) {
                   return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
                     child: ListTile(
                       title: Text(grade.subject),
                       subtitle: Text(grade.term),
@@ -250,38 +520,31 @@ class StudentDetailScreen extends StatelessWidget {
                         grade.scoreWithLetter,
                         style: theme.textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
-                          color: Colors.purple,
+                          color: AppColors.grade,
                         ),
                       ),
                     ),
                   );
                 }),
-              const SizedBox(height: 24),
-              Text(
-                'Даалгавар',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+              const SizedBox(height: AppSpacing.section),
+              KeyedSubtree(
+                key: _homeworkKey,
+                child: const _SectionTitle(title: 'Даалгавар'),
               ),
-              const SizedBox(height: 8),
-              if (homework.isEmpty)
+              const SizedBox(height: AppSpacing.item),
+              if (visibleHomework.isEmpty)
                 const Text('Даалгавар байхгүй')
               else
-                ...homework.map((item) => _HomeworkTile(homework: item)),
-              const SizedBox(height: 24),
-              Text(
-                'Сүүлийн зарлал',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (announcements.isEmpty)
+                ...visibleHomework.map((item) => _HomeworkTile(homework: item)),
+              const SizedBox(height: AppSpacing.section),
+              const _SectionTitle(title: 'Зарлал'),
+              const SizedBox(height: AppSpacing.item),
+              if (visibleAnnouncements.isEmpty)
                 const Text('Зарлал байхгүй')
               else
-                ...announcements
-                    .take(5)
-                    .map((item) => _AnnouncementTile(announcement: item)),
+                ...visibleAnnouncements.map(
+                  (item) => _AnnouncementTile(announcement: item),
+                ),
             ],
           );
         },
@@ -295,13 +558,17 @@ class _AttendanceSummary {
     required this.present,
     required this.late,
     required this.absent,
+    required this.history,
   });
 
   final int present;
   final int late;
   final int absent;
+  final List<_AttendanceHistoryItem> history;
 
   int get total => present + late + absent;
+
+  double get progress => total == 0 ? 0 : present / total;
 
   String get percentageLabel {
     if (total == 0) return '0%';
@@ -310,28 +577,49 @@ class _AttendanceSummary {
   }
 }
 
-class _StatChip extends StatelessWidget {
-  const _StatChip({
-    required this.label,
-    required this.count,
-    required this.color,
-  });
+class _AttendanceHistoryItem {
+  const _AttendanceHistoryItem({required this.date, required this.status});
 
-  final String label;
-  final int count;
-  final Color color;
+  final String date;
+  final AttendanceStatus status;
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.title});
+
+  final String title;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        '$label: $count',
-        style: TextStyle(color: color, fontWeight: FontWeight.w600),
+    return Text(title, style: Theme.of(context).textTheme.titleMedium);
+  }
+}
+
+class _QuickActionButton extends StatelessWidget {
+  const _QuickActionButton({
+    required this.width,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final double width;
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      height: AppSpacing.buttonHeight,
+      child: FilledButton.tonalIcon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 20),
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        style: FilledButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+        ),
       ),
     );
   }
@@ -345,20 +633,21 @@ class _HomeworkTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDone = homework.status == HomeworkStatus.done;
-    final color = isDone ? Colors.green : Colors.orange;
+    final color = isDone ? AppColors.success : AppColors.homework;
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
+        dense: true,
         leading: Icon(
           isDone ? Icons.assignment_turned_in : Icons.assignment,
           color: color,
         ),
         title: Text(homework.title),
         subtitle: Text('${homework.subject} • ${homework.dueDate}'),
-        trailing: Text(
-          homework.status.label,
-          style: TextStyle(color: color, fontWeight: FontWeight.w600),
+        trailing: StatusBadge(
+          label: homework.status.label,
+          color: color,
+          compact: true,
         ),
       ),
     );
@@ -373,14 +662,51 @@ class _AnnouncementTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: Icon(
-          announcement.isFeatured ? Icons.star : Icons.campaign,
-          color: announcement.isFeatured ? Colors.amber : Colors.blue,
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.card),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              announcement.isFeatured ? Icons.star : Icons.campaign,
+              color: announcement.isFeatured
+                  ? AppColors.warning
+                  : AppColors.announcement,
+            ),
+            const SizedBox(width: AppSpacing.gap),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          announcement.title,
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                      if (announcement.isFeatured)
+                        StatusBadge(
+                          label: 'Онцлох',
+                          color: AppColors.warning,
+                          compact: true,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.itemSm),
+                  Text(announcement.date),
+                  const SizedBox(height: AppSpacing.itemSm),
+                  Text(
+                    announcement.body,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        title: Text(announcement.title),
-        subtitle: Text(announcement.date),
       ),
     );
   }

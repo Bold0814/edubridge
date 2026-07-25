@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../models/subject.dart';
+import '../models/teacher_assigned_class.dart';
 import '../state/app_store.dart';
-import 'announcement_screen.dart';
-import 'attendance_screen.dart';
+import '../theme/app_spacing.dart';
+import '../widgets/edubridge_logo.dart';
+import '../widgets/session_menu_button.dart';
 import 'class_dashboard_screen.dart';
-import 'grade_screen.dart';
-import 'homework_screen.dart';
 
+/// Class workspace shell — dashboard hub (creation happens in destination screens).
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -22,76 +24,123 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _selectedIndex = 0;
-  late final List<Widget> _screens;
-
-  static const _titles = ['Нүүр', 'Зарлал', 'Даалгавар', 'Ирц', 'Дүн'];
+  late String _selectedClass;
 
   @override
   void initState() {
     super.initState();
-    final selectedClass = widget.selectedClass;
-    final store = widget.store;
-    _screens = [
-      ClassDashboardScreen(selectedClass: selectedClass, store: store),
-      AnnouncementScreen(selectedClass: selectedClass, store: store),
-      HomeworkScreen(selectedClass: selectedClass, store: store),
-      AttendanceScreen(selectedClass: selectedClass, store: store),
-      GradeScreen(selectedClass: selectedClass, store: store),
-    ];
+    _selectedClass = widget.selectedClass;
   }
 
-  void _changeClass() {
-    Navigator.pop(context);
+  Future<void> _onClassChanged(String classId) async {
+    final access = widget.store.assignedClassForActiveTeacher(classId);
+    if (access == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Энэ ангид хандах эрхгүй байна.')),
+      );
+      return;
+    }
+
+    var preferred = widget.store.activeContext.subjectId;
+    if (access.subjects.length > 1) {
+      final belongs =
+          preferred != null && access.subjects.any((s) => s.id == preferred);
+      if (!belongs) {
+        preferred = await _pickSubject(access);
+        if (preferred == null) return;
+      }
+    }
+
+    final ok = await widget.store.selectTeacherDashboardClass(
+      classId,
+      preferredSubjectId: preferred,
+    );
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Энэ ангид хандах эрхгүй байна.')),
+      );
+      return;
+    }
+    setState(() => _selectedClass = classId);
+  }
+
+  Future<int?> _pickSubject(TeacherAssignedClass access) async {
+    return showDialog<int>(
+      context: context,
+      builder: (context) {
+        return SimpleDialog(
+          title: Text('${access.className} · Хичээл сонгох'),
+          children: [
+            for (final Subject subject in access.subjects)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, subject.id),
+                child: Text(subject.name),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titles[_selectedIndex]),
+        title: const FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              EduBridgeLogo(size: 30),
+              SizedBox(width: 8),
+              Text('EduBridge'),
+            ],
+          ),
+        ),
         centerTitle: true,
-        actions: [
-          if (_selectedIndex != 0)
-            TextButton(
-              onPressed: _changeClass,
-              child: const Text('Анги солих'),
-            ),
-        ],
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Буцах',
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [SessionMenuButton(store: widget.store)],
       ),
-      body: IndexedStack(index: _selectedIndex, children: _screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() => _selectedIndex = index);
+      body: ListenableBuilder(
+        listenable: widget.store,
+        builder: (context, _) {
+          final assigned = widget.store.assignedClassesForActiveTeacher();
+          if (assigned.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(AppSpacing.page),
+                child: Text(
+                  'Танд хуваарилсан анги алга байна.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          if (!widget.store.teacherCanAccessClass(_selectedClass)) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(AppSpacing.page),
+                child: Text(
+                  'Энэ ангид хандах эрхгүй байна.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          return ClassDashboardScreen(
+            selectedClass: _selectedClass,
+            store: widget.store,
+            onClassChanged: _onClassChanged,
+          );
         },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Нүүр',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.campaign_outlined),
-            selectedIcon: Icon(Icons.campaign),
-            label: 'Зарлал',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.assignment_outlined),
-            selectedIcon: Icon(Icons.assignment),
-            label: 'Даалгавар',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.fact_check_outlined),
-            selectedIcon: Icon(Icons.fact_check),
-            label: 'Ирц',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.grade_outlined),
-            selectedIcon: Icon(Icons.grade),
-            label: 'Дүн',
-          ),
-        ],
       ),
     );
   }

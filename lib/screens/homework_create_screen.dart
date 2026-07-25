@@ -1,36 +1,34 @@
 import 'package:flutter/material.dart';
 
+import '../models/attendance_record.dart';
 import '../models/homework.dart';
 import '../state/app_store.dart';
+import '../theme/app_colors.dart';
 
 class HomeworkCreateScreen extends StatefulWidget {
   const HomeworkCreateScreen({
     super.key,
     required this.className,
     required this.store,
+    this.existing,
     this.initialSubject,
+    this.lockSubject = false,
   });
 
   final String className;
   final AppStore store;
+  final Homework? existing;
   final String? initialSubject;
+
+  /// When true, subject is fixed (active teaching subject) and not re-selected.
+  final bool lockSubject;
 
   @override
   State<HomeworkCreateScreen> createState() => _HomeworkCreateScreenState();
 }
 
 class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
-  static const _subjects = [
-    'Монгол хэл',
-    'Математик',
-    'Англи хэл',
-    'Физик',
-    'Хими',
-    'Биологи',
-    'Түүх',
-    'Газар зүй',
-    'Мэдээллийн технологи',
-  ];
+  List<String> get _subjects => widget.store.subjects;
 
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
@@ -46,11 +44,24 @@ class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedDate = DateTime.now();
-    _dueDateController.text = _formatMongolianDate(_selectedDate);
-    final initial = widget.initialSubject;
-    if (initial != null && _subjects.contains(initial)) {
-      _selectedSubject = initial;
+    final existing = widget.existing;
+    if (existing != null) {
+      _titleController.text = existing.title;
+      _descriptionController.text = existing.description;
+      _dueDateController.text = existing.dueDate;
+      final parsedDate = AttendanceRecord.tryParseCalendarDate(
+        existing.dueDate,
+      );
+      _selectedDate = parsedDate ?? DateTime.now();
+      _selectedSubject = existing.subject;
+    } else {
+      _selectedDate = DateTime.now();
+      _dueDateController.text = _formatMongolianDate(_selectedDate);
+      final initial = widget.initialSubject;
+      if (initial != null &&
+          (_subjects.contains(initial) || widget.lockSubject)) {
+        _selectedSubject = initial;
+      }
     }
   }
 
@@ -85,24 +96,38 @@ class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
     });
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    final subject = _selectedSubject?.trim();
+    if (subject == null || subject.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Хичээлээ сонгоно уу')));
+      return;
+    }
 
+    final existing = widget.existing;
     final homework = Homework(
+      id: existing?.id ?? widget.store.nextHomeworkId(),
       className: widget.className,
-      subject: _selectedSubject!,
+      subject: subject,
       title: _titleController.text.trim(),
       description: _descriptionController.text.trim(),
       dueDate: _dueDateController.text.trim(),
-      status: HomeworkStatus.pending,
+      status: existing?.status ?? HomeworkStatus.pending,
     );
 
-    widget.store.addHomework(homework);
+    if (existing != null) {
+      await widget.store.updateHomework(homework);
+    } else {
+      await widget.store.addHomework(homework);
+    }
 
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Даалгавар амжилттай хадгалагдлаа.'),
-        backgroundColor: Colors.green,
+        backgroundColor: AppColors.success,
       ),
     );
     Navigator.pop(context, homework);
@@ -111,7 +136,12 @@ class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Шинэ даалгавар'), centerTitle: true),
+      appBar: AppBar(
+        title: Text(
+          widget.existing != null ? 'Даалгавар засах' : 'Шинэ даалгавар',
+        ),
+        centerTitle: true,
+      ),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -124,34 +154,46 @@ class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              initialValue: _selectedSubject,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Хичээл',
-                border: OutlineInputBorder(),
+            if (widget.lockSubject && _selectedSubject != null)
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Хичээл',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(
+                  _selectedSubject!,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+              )
+            else
+              DropdownButtonFormField<String>(
+                initialValue: _selectedSubject,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Хичээл',
+                  border: OutlineInputBorder(),
+                ),
+                hint: const Text('Хичээл сонгох'),
+                icon: const Icon(Icons.arrow_drop_down),
+                items: _subjects
+                    .map(
+                      (subject) => DropdownMenuItem<String>(
+                        value: subject,
+                        child: Text(subject, overflow: TextOverflow.ellipsis),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  setState(() => _selectedSubject = value);
+                  _titleFocusNode.requestFocus();
+                },
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Хичээлээ сонгоно уу';
+                  }
+                  return null;
+                },
               ),
-              hint: const Text('Хичээл сонгох'),
-              icon: const Icon(Icons.arrow_drop_down),
-              items: _subjects
-                  .map(
-                    (subject) => DropdownMenuItem<String>(
-                      value: subject,
-                      child: Text(subject, overflow: TextOverflow.ellipsis),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                setState(() => _selectedSubject = value);
-                _titleFocusNode.requestFocus();
-              },
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Хичээлээ сонгоно уу';
-                }
-                return null;
-              },
-            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _titleController,

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../models/grade.dart';
+import '../models/school_settings.dart';
 import '../models/student.dart';
 import '../state/app_store.dart';
+import '../theme/app_colors.dart';
 import 'student_list_screen.dart';
 
 class BulkGradeEntryScreen extends StatefulWidget {
@@ -24,24 +26,9 @@ class BulkGradeEntryScreen extends StatefulWidget {
 }
 
 class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
-  static const _subjects = [
-    'Монгол хэл',
-    'Математик',
-    'Англи хэл',
-    'Физик',
-    'Хими',
-    'Биологи',
-    'Түүх',
-    'Газар зүй',
-    'Мэдээллийн технологи',
-  ];
+  List<String> get _subjects => widget.store.subjects;
 
-  static const _terms = [
-    '1-р улирал',
-    '2-р улирал',
-    '3-р улирал',
-    '4-р улирал',
-  ];
+  List<String> get _terms => SchoolSettings.semesterOptions;
 
   final _formKey = GlobalKey<FormState>();
   final Map<String, TextEditingController> _scoreControllers = {};
@@ -126,7 +113,7 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
     setState(() => _syncControllers(_students));
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (_isSaving) return;
     if (!_formKey.currentState!.validate()) return;
 
@@ -139,6 +126,7 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
       final score = num.parse(scoreText);
       grades.add(
         Grade(
+          id: widget.store.nextGradeId(),
           className: widget.selectedClass,
           studentId: student.id,
           studentName: student.fullName,
@@ -151,8 +139,9 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
     }
 
     setState(() => _isSaving = true);
-    widget.store.addGrades(grades);
+    await widget.store.addGrades(grades);
 
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Ангийн дүн амжилттай хадгалагдлаа')),
     );
@@ -326,7 +315,7 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
                                                 fontWeight: FontWeight.bold,
                                                 color: letter == null
                                                     ? theme.colorScheme.outline
-                                                    : Colors.purple,
+                                                    : AppColors.grade,
                                               ),
                                         ),
                                       ),

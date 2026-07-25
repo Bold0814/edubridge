@@ -1,5 +1,6 @@
 class Grade {
   const Grade({
+    required this.id,
     required this.className,
     required this.studentId,
     required this.studentName,
@@ -9,6 +10,7 @@ class Grade {
     this.letterGrade,
   });
 
+  final String id;
   final String className;
   final String studentId;
   final String studentName;
@@ -42,4 +44,24 @@ class Grade {
   }
 
   String get scoreWithLetter => '$score ($resolvedLetterGrade)';
+
+  Grade copyWith({
+    String? studentId,
+    String? studentName,
+    String? subject,
+    String? score,
+    String? term,
+    String? letterGrade,
+  }) {
+    return Grade(
+      id: id,
+      className: className,
+      studentId: studentId ?? this.studentId,
+      studentName: studentName ?? this.studentName,
+      subject: subject ?? this.subject,
+      score: score ?? this.score,
+      term: term ?? this.term,
+      letterGrade: letterGrade ?? this.letterGrade,
+    );
+  }
 }

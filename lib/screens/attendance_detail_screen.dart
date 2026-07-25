@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../models/attendance_record.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
 
 class AttendanceDetailScreen extends StatelessWidget {
   const AttendanceDetailScreen({
@@ -25,7 +27,7 @@ class AttendanceDetailScreen extends StatelessWidget {
         centerTitle: true,
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.page),
         children: [
           Text(
             '$className анги',
@@ -44,17 +46,17 @@ class AttendanceDetailScreen extends StatelessWidget {
                 _SummaryChip(
                   label: 'Ирсэн',
                   count: record.presentCount,
-                  color: Colors.green,
+                  color: AppColors.present,
                 ),
                 _SummaryChip(
                   label: 'Хоцорсон',
                   count: record.lateCount,
-                  color: Colors.orange,
+                  color: AppColors.late,
                 ),
                 _SummaryChip(
                   label: 'Тасалсан',
                   count: record.absentCount,
-                  color: Colors.red,
+                  color: AppColors.absent,
                 ),
               ],
             ),
@@ -91,7 +93,7 @@ class AttendanceDetailScreen extends StatelessWidget {
           ] else ...[
             Card(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.page),
                 child: Text(
                   'Энэ хуучин бүртгэлийн сурагчдын дэлгэрэнгүй мэдээлэл байхгүй байна',
                   style: theme.textTheme.bodyLarge,

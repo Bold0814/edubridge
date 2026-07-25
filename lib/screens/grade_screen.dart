@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../models/grade.dart';
+import '../models/student.dart';
 import '../state/app_store.dart';
-import 'bulk_grade_entry_screen.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
 import 'grade_create_screen.dart';
+import 'student_grade_detail_screen.dart';
 
+/// Class grade overview: one row per student with calculated average.
 class GradeScreen extends StatelessWidget {
   const GradeScreen({
     super.key,
@@ -15,24 +19,43 @@ class GradeScreen extends StatelessWidget {
   final String selectedClass;
   final AppStore store;
 
+  String? get _activeSubjectName => store.activeSubjectName;
+
   Future<void> _openCreateScreen(BuildContext context) async {
+    final subjectId = store.activeContext.subjectId;
+    final initialSubject = subjectId != null
+        ? store.subjectById(subjectId)?.name
+        : store.journalSubjectFor(selectedClass);
+
     await Navigator.push<Grade>(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            GradeCreateScreen(className: selectedClass, store: store),
+        builder: (context) => GradeCreateScreen(
+          className: selectedClass,
+          store: store,
+          initialSubject: initialSubject,
+        ),
       ),
     );
+    if (!context.mounted) return;
   }
 
-  Future<void> _openBulkEntryScreen(BuildContext context) async {
-    await Navigator.push(
+  Future<void> _openStudent(BuildContext context, Student student) async {
+    await Navigator.push<void>(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            BulkGradeEntryScreen(selectedClass: selectedClass, store: store),
+        builder: (context) => StudentGradeDetailScreen(
+          store: store,
+          student: student,
+          schoolId: store.activeSchoolId,
+          classId: selectedClass,
+          subjectId: store.activeContext.subjectId,
+          subjectName: _activeSubjectName,
+          term: store.journalTermFor(selectedClass),
+        ),
       ),
     );
+    if (!context.mounted) return;
   }
 
   @override
@@ -42,59 +65,97 @@ class GradeScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
-        final grades = store.gradesFor(selectedClass);
+        final students = store.studentsFor(selectedClass);
+        final subjectName = _activeSubjectName;
+        final isEmpty = students.isEmpty;
 
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(
-              '$selectedClass анги',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () => _openBulkEntryScreen(context),
-              icon: const Icon(Icons.groups),
-              label: const Text('Ангийн дүн оруулах'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
-              ),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => _openCreateScreen(context),
-              icon: const Icon(Icons.add),
-              label: const Text('Дүн оруулах'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ...grades.map((item) {
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.all(16),
-                  leading: const Icon(Icons.grade, color: Colors.purple),
-                  title: Text(
-                    item.subject,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Text('${item.studentName}\n${item.term}'),
-                  isThreeLine: true,
-                  trailing: Text(
-                    item.scoreWithLetter,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: Colors.purple,
-                      fontWeight: FontWeight.bold,
+        return Scaffold(
+          appBar: AppBar(
+            title: Text('$selectedClass · Ангийн дүн'),
+            centerTitle: true,
+          ),
+          floatingActionButton: FloatingActionButton(
+            onPressed: () => _openCreateScreen(context),
+            tooltip: 'Дүн оруулах',
+            child: const Icon(Icons.add),
+          ),
+          body: isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppSpacing.page),
+                    child: Text(
+                      'Сурагч бүртгээгүй байна',
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.page,
+                    AppSpacing.page,
+                    AppSpacing.page,
+                    88,
+                  ),
+                  itemCount: students.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 4),
+                  itemBuilder: (context, index) {
+                    final student = students[index];
+                    final average = store.averageGradeForClassStudent(
+                      className: selectedClass,
+                      studentId: student.id,
+                      subjectName: subjectName,
+                    );
+                    final averageLabel = store.formatGradeAverage(average);
+
+                    return Material(
+                      color: AppColors.card,
+                      borderRadius: BorderRadius.circular(AppSpacing.radius),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(AppSpacing.radius),
+                        onTap: () => _openStudent(context, student),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  student.fullName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                averageLabel,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  color: average == null
+                                      ? AppColors.onSurfaceVariant
+                                      : AppColors.grade,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              const Icon(
+                                Icons.chevron_right,
+                                size: 20,
+                                color: AppColors.onSurfaceVariant,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            }),
-          ],
         );
       },
     );

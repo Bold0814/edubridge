@@ -8,10 +8,12 @@ class AnnouncementCreateScreen extends StatefulWidget {
     super.key,
     required this.className,
     required this.store,
+    this.existing,
   });
 
   final String className;
   final AppStore store;
+  final Announcement? existing;
 
   @override
   State<AnnouncementCreateScreen> createState() =>
@@ -67,6 +69,8 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     final announcement = Announcement(
+      id: widget.existing?.id ?? widget.store.nextAnnouncementId(),
+      schoolId: widget.store.activeSchoolId ?? AppStore.defaultSchoolId,
       className: widget.className,
       title: _titleController.text.trim(),
       body: _bodyController.text.trim(),
@@ -74,7 +78,11 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
       isFeatured: _isFeatured,
     );
 
-    widget.store.addAnnouncement(announcement);
+    if (widget.existing != null) {
+      widget.store.updateAnnouncement(announcement);
+    } else {
+      widget.store.addAnnouncement(announcement);
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Зарлал амжилттай хадгалагдлаа.')),

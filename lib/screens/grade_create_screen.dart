@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/grade.dart';
+import '../models/school_settings.dart';
 import '../models/student.dart';
 import '../state/app_store.dart';
 
@@ -9,6 +10,7 @@ class GradeCreateScreen extends StatefulWidget {
     super.key,
     required this.className,
     required this.store,
+    this.existing,
     this.initialStudent,
     this.initialSubject,
     this.initialTerm,
@@ -16,6 +18,7 @@ class GradeCreateScreen extends StatefulWidget {
 
   final String className;
   final AppStore store;
+  final Grade? existing;
   final Student? initialStudent;
   final String? initialSubject;
   final String? initialTerm;
@@ -25,24 +28,9 @@ class GradeCreateScreen extends StatefulWidget {
 }
 
 class _GradeCreateScreenState extends State<GradeCreateScreen> {
-  static const _subjects = [
-    'Монгол хэл',
-    'Математик',
-    'Англи хэл',
-    'Физик',
-    'Хими',
-    'Биологи',
-    'Түүх',
-    'Газар зүй',
-    'Мэдээллийн технологи',
-  ];
+  List<String> get _terms => SchoolSettings.semesterOptions;
 
-  static const _terms = [
-    '1-р улирал',
-    '2-р улирал',
-    '3-р улирал',
-    '4-р улирал',
-  ];
+  List<String> get _subjects => widget.store.subjects;
 
   final _formKey = GlobalKey<FormState>();
   final _scoreController = TextEditingController();
@@ -56,18 +44,39 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
   void initState() {
     super.initState();
     _scoreController.addListener(_updateLetterPreview);
-    final initialStudent = widget.initialStudent;
-    if (initialStudent != null) {
-      _selectedStudent = initialStudent;
+    final existing = widget.existing;
+    if (existing != null) {
+      _scoreController.text = existing.score;
+      if (_subjects.contains(existing.subject)) {
+        _selectedSubject = existing.subject;
+      } else {
+        _selectedSubject = existing.subject;
+      }
+      if (_terms.contains(existing.term)) {
+        _selectedTerm = existing.term;
+      }
+      final students = widget.store.studentsFor(widget.className);
+      for (final item in students) {
+        if (item.id == existing.studentId) {
+          _selectedStudent = item;
+          break;
+        }
+      }
+    } else {
+      final initialStudent = widget.initialStudent;
+      if (initialStudent != null) {
+        _selectedStudent = initialStudent;
+      }
+      final initialSubject = widget.initialSubject;
+      if (initialSubject != null && _subjects.contains(initialSubject)) {
+        _selectedSubject = initialSubject;
+      }
+      final initialTerm = widget.initialTerm;
+      if (initialTerm != null && _terms.contains(initialTerm)) {
+        _selectedTerm = initialTerm;
+      }
     }
-    final initialSubject = widget.initialSubject;
-    if (initialSubject != null && _subjects.contains(initialSubject)) {
-      _selectedSubject = initialSubject;
-    }
-    final initialTerm = widget.initialTerm;
-    if (initialTerm != null && _terms.contains(initialTerm)) {
-      _selectedTerm = initialTerm;
-    }
+    _updateLetterPreview();
   }
 
   @override
@@ -84,12 +93,14 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
     }
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
     final scoreText = _scoreController.text.trim();
     final student = _selectedStudent!;
+    final existing = widget.existing;
     final grade = Grade(
+      id: existing?.id ?? widget.store.nextGradeId(),
       className: widget.className,
       studentId: student.id,
       studentName: student.fullName,
@@ -99,8 +110,13 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
       letterGrade: Grade.letterFromScore(num.parse(scoreText)),
     );
 
-    widget.store.addGrade(grade);
+    if (existing != null) {
+      await widget.store.updateGrade(grade);
+    } else {
+      await widget.store.addGrade(grade);
+    }
 
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Дүн амжилттай хадгалагдлаа.')),
     );
@@ -113,7 +129,10 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Дүн оруулах'), centerTitle: true),
+      appBar: AppBar(
+        title: Text(widget.existing != null ? 'Дүн засах' : 'Дүн оруулах'),
+        centerTitle: true,
+      ),
       body: Form(
         key: _formKey,
         child: ListView(

@@ -1,0 +1,35 @@
+/// Teacher profile used for homeroom and subject assignment.
+class Teacher {
+  const Teacher({
+    required this.id,
+    required this.fullName,
+    required this.schoolId,
+    this.phone = '',
+    this.email = '',
+    this.isActive = true,
+  });
+
+  final String id;
+  final String fullName;
+  final String schoolId;
+  final String phone;
+  final String email;
+  final bool isActive;
+
+  Teacher copyWith({
+    String? fullName,
+    String? schoolId,
+    String? phone,
+    String? email,
+    bool? isActive,
+  }) {
+    return Teacher(
+      id: id,
+      fullName: fullName ?? this.fullName,
+      schoolId: schoolId ?? this.schoolId,
+      phone: phone ?? this.phone,
+      email: email ?? this.email,
+      isActive: isActive ?? this.isActive,
+    );
+  }
+}

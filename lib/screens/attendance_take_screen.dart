@@ -9,10 +9,12 @@ class AttendanceTakeScreen extends StatefulWidget {
     super.key,
     required this.selectedClass,
     required this.store,
+    this.existing,
   });
 
   final String selectedClass;
   final AppStore store;
+  final AttendanceRecord? existing;
 
   @override
   State<AttendanceTakeScreen> createState() => _AttendanceTakeScreenState();
@@ -27,6 +29,16 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
   void initState() {
     super.initState();
     _syncStatuses();
+    final existing = widget.existing;
+    if (existing != null && existing.hasStudentDetails) {
+      for (final entry in existing.entries!) {
+        for (final student in _students) {
+          if (student.fullName == entry.studentName) {
+            _statuses[student.id] = entry.status;
+          }
+        }
+      }
+    }
     widget.store.addListener(_onStoreChanged);
   }
 
@@ -50,7 +62,9 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
     );
   }
 
-  String get _todayLabel {
+  String get _dateLabel {
+    final existing = widget.existing;
+    if (existing != null) return existing.date;
     final now = DateTime.now();
     return '${now.year} оны ${now.month} сарын ${now.day}';
   }
@@ -90,7 +104,7 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
     setState(() => _statuses[student.id] = status);
   }
 
-  void _saveAttendance() {
+  Future<void> _saveAttendance() async {
     final students = _students;
     if (students.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -118,14 +132,21 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
         )
         .toList();
 
+    final existing = widget.existing;
     final record = AttendanceRecord.detailed(
-      date: _todayLabel,
+      id: existing?.id ?? widget.store.nextAttendanceId(),
+      date: _dateLabel,
       className: widget.selectedClass,
       entries: entries,
     );
 
-    widget.store.addAttendance(widget.selectedClass, record);
+    if (existing != null) {
+      await widget.store.updateAttendance(record);
+    } else {
+      await widget.store.addAttendance(widget.selectedClass, record);
+    }
 
+    if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Ирц амжилттай хадгалагдлаа')));
@@ -138,7 +159,10 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
     final students = _students;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Өнөөдрийн ирц'), centerTitle: true),
+      appBar: AppBar(
+        title: Text(widget.existing != null ? 'Ирц засах' : 'Өнөөдрийн ирц'),
+        centerTitle: true,
+      ),
       body: Column(
         children: [
           Padding(
@@ -154,7 +178,7 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _todayLabel,
+                  _dateLabel,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),

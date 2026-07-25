@@ -22,6 +22,7 @@ class Student {
     this.register,
     this.phone,
     this.guardian,
+    this.studentCode,
   });
 
   final String id;
@@ -33,6 +34,9 @@ class Student {
   final String? phone;
   final String? guardian;
 
+  /// School-scoped login code (unique per school, case-insensitive).
+  final String? studentCode;
+
   String get fullName => '$lastName $firstName';
 
   Student copyWith({
@@ -42,9 +46,11 @@ class Student {
     String? register,
     String? phone,
     String? guardian,
+    String? studentCode,
     bool clearRegister = false,
     bool clearPhone = false,
     bool clearGuardian = false,
+    bool clearStudentCode = false,
   }) {
     return Student(
       id: id,
@@ -55,6 +61,7 @@ class Student {
       register: clearRegister ? null : (register ?? this.register),
       phone: clearPhone ? null : (phone ?? this.phone),
       guardian: clearGuardian ? null : (guardian ?? this.guardian),
+      studentCode: clearStudentCode ? null : (studentCode ?? this.studentCode),
     );
   }
 

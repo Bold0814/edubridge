@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+
 enum AttendanceStatus {
   present,
   late,
@@ -19,11 +21,11 @@ enum AttendanceStatus {
   Color get color {
     switch (this) {
       case AttendanceStatus.present:
-        return Colors.green;
+        return AppColors.present;
       case AttendanceStatus.late:
-        return Colors.orange;
+        return AppColors.late;
       case AttendanceStatus.absent:
-        return Colors.red;
+        return AppColors.absent;
     }
   }
 }
@@ -57,6 +59,7 @@ class AttendanceSummary {
 
 class AttendanceRecord {
   const AttendanceRecord({
+    required this.id,
     required this.date,
     required this.className,
     required this.presentCount,
@@ -66,14 +69,18 @@ class AttendanceRecord {
     this.status,
   });
 
-  const AttendanceRecord.legacy({required this.date, required this.status})
-    : className = '',
-      presentCount = 0,
-      lateCount = 0,
-      absentCount = 0,
-      entries = null;
+  const AttendanceRecord.legacy({
+    required this.id,
+    required this.date,
+    required this.status,
+  }) : className = '',
+       presentCount = 0,
+       lateCount = 0,
+       absentCount = 0,
+       entries = null;
 
   factory AttendanceRecord.detailed({
+    required String id,
     required String date,
     required String className,
     required List<StudentAttendanceEntry> entries,
@@ -89,6 +96,7 @@ class AttendanceRecord {
         .length;
 
     return AttendanceRecord(
+      id: id,
       date: date,
       className: className,
       presentCount: presentCount,
@@ -98,6 +106,7 @@ class AttendanceRecord {
     );
   }
 
+  final String id;
   final String date;
   final String className;
   final int presentCount;
