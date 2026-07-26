@@ -53,8 +53,14 @@ class _TeacherFormScreenState extends State<TeacherFormScreen> {
     super.dispose();
   }
 
-  UserAccount? get _linkedAccount {
+  Teacher? get _teacher {
     final id = widget.existing?.id;
+    if (id == null) return null;
+    return widget.store.teacherById(id) ?? widget.existing;
+  }
+
+  UserAccount? get _linkedAccount {
+    final id = _teacher?.id;
     if (id == null) return null;
     return widget.store.loginAccountForTeacher(id);
   }
@@ -69,6 +75,7 @@ class _TeacherFormScreenState extends State<TeacherFormScreen> {
       'EMPTY_PHONE' => 'Нэвтрэх эрх үүсгэхийн тулд утасны дугаар оруулна уу.',
       'EMPTY_USERNAME' => 'Нэвтрэх утас хоосон байж болохгүй.',
       'DUPLICATE_USERNAME' => 'Энэ утасны дугаар бүртгэлтэй байна.',
+      'DUPLICATE_PHONE' => 'Энэ утасны дугаар өөр бүртгэлд ашиглагдаж байна.',
       'PASSWORD_MISMATCH' => PasswordRules.mismatchMessage,
       'INVALID_PASSWORD' =>
         PasswordRules.validateNewPassword(
@@ -77,6 +84,8 @@ class _TeacherFormScreenState extends State<TeacherFormScreen> {
             ) ??
             'Нууц үг шаардлага хангахгүй байна.',
       'TEACHER_ACCOUNT_EXISTS' => 'Энэ багшид нэвтрэх эрх аль хэдийн байна.',
+      'UNSAFE_ACCOUNT_LINK' =>
+        'Нэвтрэх эрх буруу холбогдсон байна. Тусдаа багшийн эрх үүсгэнэ үү.',
       'NOT_FOUND' => 'Бүртгэл олдсонгүй.',
       _ => 'Хадгалах үед алдаа гарлаа.',
     };
@@ -117,22 +126,29 @@ class _TeacherFormScreenState extends State<TeacherFormScreen> {
       }
 
       if (widget.isEditing) {
+        final current = _teacher!;
         final phone = PhoneNormalizer.normalize(_phoneController.text);
         await widget.store.updateTeacher(
-          widget.existing!.copyWith(
+          current.copyWith(
             fullName: name,
-            phone: phone.isEmpty ? _phoneController.text.trim() : phone,
+            phone: phone,
             email: _emailController.text.trim(),
           ),
           allowDuplicate: true,
         );
         if (!mounted) return;
+        final refreshed = widget.store.teacherById(current.id);
+        if (refreshed != null) {
+          _phoneController.text = refreshed.phone;
+          _nameController.text = refreshed.fullName;
+          _emailController.text = refreshed.email;
+        }
+        setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Багшийн мэдээлэл амжилттай хадгалагдлаа.'),
+            content: Text('Багшийн мэдээлэл амжилттай шинэчлэгдлээ.'),
           ),
         );
-        Navigator.of(context).pop(true);
         return;
       }
 
@@ -172,7 +188,7 @@ class _TeacherFormScreenState extends State<TeacherFormScreen> {
   }
 
   Future<void> _createLoginForExisting() async {
-    final teacher = widget.existing;
+    final teacher = _teacher;
     if (teacher == null) return;
 
     final passwordCtrl = TextEditingController();
@@ -393,14 +409,13 @@ class _TeacherFormScreenState extends State<TeacherFormScreen> {
       );
     }
 
-    final status = widget.store.teacherLoginStatusLabel(widget.existing!.id);
+    final teacher = _teacher!;
+    final status = widget.store.teacherLoginStatusLabel(teacher.id);
     final account = _linkedAccount;
-    final adminLinked = widget.store.adminAccountForTeacher(
-      widget.existing!.id,
-    );
+    final adminLinked = widget.store.adminAccountForTeacher(teacher.id);
     final loginPhone = account != null
         ? PhoneNormalizer.normalize(account.username)
-        : PhoneNormalizer.normalize(widget.existing!.phone);
+        : PhoneNormalizer.normalize(teacher.phone);
 
     return Card(
       child: Padding(

@@ -335,13 +335,13 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: SchoolSetupScreen(store: store)));
     await tester.pump();
     expect(find.byType(SchoolSetupScreen), findsOneWidget);
-    expect(find.text('Сургуулиа бэлтгэх'), findsWidgets);
+    expect(find.text('Сургуулийн бэлтгэл'), findsWidgets);
     expect(find.text('Ажлын хэсэг рүү орох'), findsOneWidget);
-    expect(find.text('Багш нар'), findsOneWidget);
-    expect(find.text('Ангиуд'), findsOneWidget);
-    expect(find.text('Хичээлүүд'), findsOneWidget);
-    expect(find.text('Сурагчид'), findsOneWidget);
+    expect(find.text('Багш бүртгэх'), findsOneWidget);
+    expect(find.text('Анги үүсгэх'), findsOneWidget);
+    expect(find.text('Хичээл үүсгэх'), findsOneWidget);
+    expect(find.text('Багш, ангийг оноох'), findsOneWidget);
+    expect(find.text('Хичээлийн хуваарь оруулах'), findsOneWidget);
     expect(find.text('Асран хамгаалагчид'), findsNothing);
-    expect(find.text('Хичээлийн хуваарь'), findsNothing);
   });
 }

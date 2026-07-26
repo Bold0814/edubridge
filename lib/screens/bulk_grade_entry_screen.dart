@@ -26,7 +26,17 @@ class BulkGradeEntryScreen extends StatefulWidget {
 }
 
 class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
-  List<String> get _subjects => widget.store.subjects;
+  List<String> get _subjects {
+    final taught = widget.store
+        .subjectsTaughtByActiveTeacherInClass(widget.selectedClass)
+        .map((s) => s.name)
+        .toList();
+    if (taught.isNotEmpty) return taught;
+    if (widget.store.hasAdminPermissionForActiveSchool) {
+      return widget.store.subjects;
+    }
+    return taught;
+  }
 
   List<String> get _terms => SchoolSettings.semesterOptions;
 

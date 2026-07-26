@@ -28,7 +28,17 @@ class HomeworkCreateScreen extends StatefulWidget {
 }
 
 class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
-  List<String> get _subjects => widget.store.subjects;
+  List<String> get _subjects {
+    final taught = widget.store
+        .subjectsTaughtByActiveTeacherInClass(widget.className)
+        .map((s) => s.name)
+        .toList();
+    if (taught.isNotEmpty) return taught;
+    if (widget.store.hasAdminPermissionForActiveSchool) {
+      return widget.store.subjects;
+    }
+    return taught;
+  }
 
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();

@@ -8,7 +8,7 @@ import '../screens/school/school_selection_screen.dart';
 import '../screens/teacher_workspace_screen.dart';
 import '../state/app_store.dart';
 
-enum _SessionMenuAction { changeContext, switchSchool, logout }
+enum _SessionMenuAction { changeContext, switchSchool, schoolSetup, logout }
 
 /// Compact profile menu: context switch, school switch, logout.
 class SessionMenuButton extends StatelessWidget {
@@ -17,6 +17,8 @@ class SessionMenuButton extends StatelessWidget {
     required this.store,
     this.showChangeContext = true,
     this.openAdminHomeOnChangeContext = false,
+    this.showSchoolSetupProgress = false,
+    this.onOpenSchoolSetup,
   });
 
   final AppStore store;
@@ -25,6 +27,11 @@ class SessionMenuButton extends StatelessWidget {
   /// When true, “Сонголт солих” returns to [AdminSchoolHomeScreen]
   /// (admin + teacher switching from the teacher workspace).
   final bool openAdminHomeOnChangeContext;
+
+  /// Admin-only: show “Бэлтгэлийн явц” in the overflow menu.
+  final bool showSchoolSetupProgress;
+
+  final VoidCallback? onOpenSchoolSetup;
 
   Future<void> _onSelected(
     BuildContext context,
@@ -39,6 +46,8 @@ class SessionMenuButton extends StatelessWidget {
             builder: (context) => SchoolSelectionScreen(store: store),
           ),
         );
+      case _SessionMenuAction.schoolSetup:
+        onOpenSchoolSetup?.call();
       case _SessionMenuAction.logout:
         await AppNavigation.logoutToLogin(context, store);
     }
@@ -48,14 +57,11 @@ class SessionMenuButton extends StatelessWidget {
     if (openAdminHomeOnChangeContext &&
         store.hasAdminPermissionForActiveSchool) {
       if (!context.mounted) return;
-      if (Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-        return;
-      }
-      await Navigator.of(context).push(
+      Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (context) => AdminSchoolHomeScreen(store: store),
         ),
+        (route) => false,
       );
       return;
     }
@@ -95,6 +101,11 @@ class SessionMenuButton extends StatelessWidget {
             (role == AppRole.guardian &&
                 store.guardianPortalStudents.length > 1));
 
+    final canShowSetup =
+        showSchoolSetupProgress &&
+        store.hasAdminPermissionForActiveSchool &&
+        onOpenSchoolSetup != null;
+
     return PopupMenuButton<_SessionMenuAction>(
       tooltip: 'Цэс',
       icon: const Icon(Icons.more_vert),
@@ -109,6 +120,11 @@ class SessionMenuButton extends StatelessWidget {
           const PopupMenuItem(
             value: _SessionMenuAction.switchSchool,
             child: Text('Сургууль солих'),
+          ),
+        if (canShowSetup)
+          const PopupMenuItem(
+            value: _SessionMenuAction.schoolSetup,
+            child: Text('Бэлтгэлийн явц'),
           ),
         const PopupMenuItem(
           value: _SessionMenuAction.logout,

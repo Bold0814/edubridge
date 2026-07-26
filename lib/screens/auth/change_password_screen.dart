@@ -6,11 +6,19 @@ import '../../state/app_store.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/edubridge_logo.dart';
 
-/// Forced password change after temporary teacher password login.
+/// Password change — forced after temporary login, or voluntary from the menu.
 class ChangePasswordScreen extends StatefulWidget {
-  const ChangePasswordScreen({super.key, required this.store});
+  const ChangePasswordScreen({
+    super.key,
+    required this.store,
+    this.isRequired = true,
+  });
 
   final AppStore store;
+
+  /// When true, continues into the role home after save.
+  /// When false, pops back to the previous screen.
+  final bool isRequired;
 
   @override
   State<ChangePasswordScreen> createState() => _ChangePasswordScreenState();
@@ -46,16 +54,25 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     });
 
     try {
-      await widget.store.completeRequiredPasswordChange(
-        newPassword: _passwordController.text,
-        confirmPassword: _confirmController.text,
-      );
-      if (!mounted) return;
-      await AppNavigation.continueFromSchoolResolution(
-        context,
-        widget.store,
-        preferLastSchool: false,
-      );
+      if (widget.isRequired) {
+        await widget.store.completeRequiredPasswordChange(
+          newPassword: _passwordController.text,
+          confirmPassword: _confirmController.text,
+        );
+        if (!mounted) return;
+        await AppNavigation.continueFromSchoolResolution(
+          context,
+          widget.store,
+          preferLastSchool: false,
+        );
+      } else {
+        await widget.store.changeOwnPassword(
+          newPassword: _passwordController.text,
+          confirmPassword: _confirmController.text,
+        );
+        if (!mounted) return;
+        Navigator.of(context).pop();
+      }
     } on ArgumentError catch (e) {
       if (!mounted) return;
       setState(() {
@@ -78,8 +95,13 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    final title = widget.isRequired ? 'Шинэ нууц үг үүсгэх' : 'Нууц үг солих';
+    final subtitle = widget.isRequired
+        ? 'Түр нууц үгээ солино уу.'
+        : 'Шинэ нууц үгээ оруулна уу.';
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Шинэ нууц үг үүсгэх')),
+      appBar: AppBar(title: Text(title)),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.page),
@@ -87,7 +109,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             const Center(child: EduBridgeLogo(size: 72)),
             const SizedBox(height: AppSpacing.sectionSm),
             Text(
-              'Шинэ нууц үг үүсгэх',
+              title,
               textAlign: TextAlign.center,
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w700,
@@ -95,7 +117,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             ),
             const SizedBox(height: AppSpacing.itemSm),
             Text(
-              'Түр нууц үгээ солино уу.',
+              subtitle,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium,
             ),

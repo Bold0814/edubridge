@@ -34,6 +34,7 @@ class GradeScreen extends StatelessWidget {
           className: selectedClass,
           store: store,
           initialSubject: initialSubject,
+          lockSubject: store.activeContext.subjectId != null,
         ),
       ),
     );
@@ -74,11 +75,14 @@ class GradeScreen extends StatelessWidget {
             title: Text('$selectedClass · Ангийн дүн'),
             centerTitle: true,
           ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _openCreateScreen(context),
-            tooltip: 'Дүн оруулах',
-            child: const Icon(Icons.add),
-          ),
+          floatingActionButton:
+              store.teacherCanEditActiveSubjectInClass(selectedClass)
+              ? FloatingActionButton(
+                  onPressed: () => _openCreateScreen(context),
+                  tooltip: 'Дүн оруулах',
+                  child: const Icon(Icons.add),
+                )
+              : null,
           body: isEmpty
               ? Center(
                   child: Padding(

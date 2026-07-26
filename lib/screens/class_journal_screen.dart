@@ -1,130 +1,280 @@
 import 'package:flutter/material.dart';
 
 import '../models/attendance_record.dart';
+import '../models/grade.dart';
 import '../models/homework.dart';
+import '../models/lesson_occurrence.dart';
+import '../services/journal_schedule_service.dart';
 import '../state/app_store.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
-import '../theme/app_theme.dart';
 import 'attendance_take_screen.dart';
 import 'bulk_grade_entry_screen.dart';
-import 'homework_create_screen.dart';
 import 'homework_screen.dart';
+import 'journal_history_screen.dart';
 import 'teacher_notes_screen.dart';
 
-/// Date-focused daily lesson record (not a full class management hub).
+/// Schedule-driven lesson-occurrence journal (not a full class dashboard).
 class ClassJournalScreen extends StatefulWidget {
   const ClassJournalScreen({
     super.key,
     required this.selectedClass,
     required this.store,
+    this.subjectId,
+    this.initialPeriodId,
+    this.initialDate,
   });
 
   final String selectedClass;
   final AppStore store;
+  final int? subjectId;
+  final String? initialPeriodId;
+  final DateTime? initialDate;
 
   @override
   State<ClassJournalScreen> createState() => _ClassJournalScreenState();
 }
 
 class _ClassJournalScreenState extends State<ClassJournalScreen> {
-  late DateTime _selectedDate;
+  ScheduledJournalLesson? _current;
+  List<ScheduledJournalLesson> _timeline = const [];
+  LessonOccurrence? _occurrence;
+  String? _statusMessage;
+  bool _loading = true;
+  bool _noTimetable = false;
+
+  int? get _subjectId =>
+      widget.subjectId ?? widget.store.activeContext.subjectId;
+
+  String? get _teacherId =>
+      widget.store.activeContext.teacherId ??
+      widget.store.authenticatedUser?.teacherId;
+
+  /// Wall clock, or [ClassJournalScreen.initialDate] when opening a fixed day.
+  DateTime get _referenceNow => widget.initialDate ?? DateTime.now();
+
+  DateTime get _today => LessonOccurrence.dateOnly(_referenceNow);
+
+  bool get _canEdit {
+    final subjectId = _subjectId;
+    if (subjectId == null) return false;
+    return widget.store.teacherCanEditClassSubject(
+      classId: widget.selectedClass,
+      subjectId: subjectId,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _selectedDate = DateTime(now.year, now.month, now.day);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
   }
 
-  String get _dateLabel =>
-      '${_selectedDate.year} оны ${_selectedDate.month} сарын ${_selectedDate.day}';
+  Future<void> _bootstrap() async {
+    final subjectId = _subjectId;
+    if (subjectId == null) {
+      setState(() {
+        _loading = false;
+        _statusMessage = 'Хичээл сонгогдоогүй байна.';
+      });
+      return;
+    }
 
-  String? get _selectedSubject {
-    final value = widget.store.journalSubjectFor(widget.selectedClass);
-    final subjects = widget.store.subjects;
-    if (value != null && subjects.contains(value)) return value;
-    return null;
+    final hasTemplate = widget.store
+        .timetableForClass(widget.selectedClass)
+        .any((e) => e.subjectId == subjectId);
+    if (!hasTemplate &&
+        widget.store
+            .lessonOccurrencesFor(
+              classId: widget.selectedClass,
+              subjectId: subjectId,
+              teacherId: _teacherId,
+            )
+            .isEmpty) {
+      setState(() {
+        _loading = false;
+        _noTimetable = true;
+        _statusMessage = 'Энэ анги, хичээлд хуваарь оруулаагүй байна.';
+      });
+      return;
+    }
+
+    final timeline = JournalScheduleService.dedupeLessons(
+      JournalScheduleService.buildTimeline(
+        widget.store,
+        classId: widget.selectedClass,
+        subjectId: subjectId,
+        teacherId: _teacherId,
+        around: widget.initialDate ?? DateTime.now(),
+      ),
+    );
+
+    ScheduledJournalLesson? selected;
+    if (widget.initialDate != null && widget.initialPeriodId != null) {
+      final day = LessonOccurrence.dateOnly(widget.initialDate!);
+      for (final item in timeline) {
+        if (item.lessonDate == day && item.periodId == widget.initialPeriodId) {
+          selected = item;
+          break;
+        }
+      }
+    }
+    selected ??= JournalScheduleService.resolveDefault(
+      widget.store,
+      classId: widget.selectedClass,
+      subjectId: subjectId,
+      teacherId: _teacherId,
+      preferredPeriodId: widget.initialPeriodId,
+      now: _referenceNow,
+    );
+
+    final today = _today;
+    final hasLessonToday = timeline.any((item) => item.lessonDate == today);
+    final message = hasLessonToday
+        ? null
+        : 'Өнөөдөр энэ хичээл хуваарьгүй байна.';
+
+    setState(() {
+      _timeline = timeline;
+      _current = selected;
+      _statusMessage = message;
+      _loading = false;
+    });
+
+    if (selected != null) {
+      await _ensureCurrent(selected);
+    }
   }
 
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(_selectedDate.year - 1),
-      lastDate: DateTime(_selectedDate.year + 1),
+  Future<void> _ensureCurrent(ScheduledJournalLesson lesson) async {
+    final occurrence = await widget.store.ensureLessonOccurrence(
+      classId: lesson.classId,
+      subjectId: lesson.subjectId,
+      lessonDate: lesson.lessonDate,
+      periodId: lesson.periodId,
+      teacherId: lesson.teacherId.isEmpty ? _teacherId : lesson.teacherId,
+      timetableEntryId: lesson.timetableEntryId,
+    );
+    if (!mounted) return;
+    setState(() => _occurrence = occurrence);
+  }
+
+  Future<void> _selectLesson(ScheduledJournalLesson lesson) async {
+    final today = _today;
+    final hasLessonToday = _timeline.any((item) => item.lessonDate == today);
+    setState(() {
+      _current = lesson;
+      _statusMessage = hasLessonToday
+          ? null
+          : 'Өнөөдөр энэ хичээл хуваарьгүй байна.';
+    });
+    await _ensureCurrent(lesson);
+  }
+
+  Future<void> _goRelative(int delta) async {
+    final current = _current;
+    if (current == null || _timeline.isEmpty) return;
+    final index = _timeline.indexWhere(
+      (item) => item.identityKey == current.identityKey,
+    );
+    final nextIndex = index < 0 ? -1 : index + delta;
+    if (nextIndex < 0 || nextIndex >= _timeline.length) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            delta < 0
+                ? 'Өмнөх хичээл олдсонгүй.'
+                : 'Дараагийн хичээл олдсонгүй.',
+          ),
+        ),
+      );
+      return;
+    }
+    await _selectLesson(_timeline[nextIndex]);
+  }
+
+  Future<void> _openHistory() async {
+    final subjectId = _subjectId;
+    if (subjectId == null) return;
+    final picked = await Navigator.push<ScheduledJournalLesson>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => JournalHistoryScreen(
+          store: widget.store,
+          classId: widget.selectedClass,
+          subjectId: subjectId,
+          teacherId: _teacherId,
+        ),
+      ),
     );
     if (picked == null || !mounted) return;
-    setState(() {
-      _selectedDate = DateTime(picked.year, picked.month, picked.day);
-    });
+    await _selectLesson(picked);
   }
 
   Future<void> _openAttendance() async {
+    if (!_canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(AppStore.subjectEditDeniedMessage)),
+      );
+      return;
+    }
+    final lesson = _current;
+    if (lesson == null) return;
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => AttendanceTakeScreen(
           selectedClass: widget.selectedClass,
           store: widget.store,
+          lessonDate: lesson.lessonDate,
         ),
       ),
     );
+    if (mounted) setState(() {});
   }
 
-  Future<void> _openHomework() async {
-    final subject = _selectedSubject;
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => HomeworkScreen(
-          selectedClass: widget.selectedClass,
-          store: widget.store,
-          subjectId: subject == null
-              ? widget.store.activeContext.subjectId
-              : widget.store.subjectByName(subject)?.id,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openHomeworkCreate() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => HomeworkCreateScreen(
-          className: widget.selectedClass,
-          store: widget.store,
-          initialSubject: _selectedSubject,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openBulkGrades() async {
-    final subject = _selectedSubject;
-    final term = widget.store.journalTermFor(widget.selectedClass);
-    if (subject == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Хичээлээ сонгоно уу')));
+  Future<void> _openGrades() async {
+    if (!_canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(AppStore.subjectEditDeniedMessage)),
+      );
       return;
     }
-
+    final subjectId = _subjectId;
+    final subject = subjectId == null
+        ? null
+        : widget.store.subjectById(subjectId);
+    if (subject == null) return;
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => BulkGradeEntryScreen(
           selectedClass: widget.selectedClass,
           store: widget.store,
-          initialSubject: subject,
-          initialTerm: term,
+          initialSubject: subject.name,
+          initialTerm: widget.store.journalTermFor(widget.selectedClass),
         ),
       ),
     );
+    if (mounted) setState(() {});
   }
 
-  Future<void> _openTeacherNotes() async {
+  Future<void> _openHomework() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => HomeworkScreen(
+          selectedClass: widget.selectedClass,
+          store: widget.store,
+          subjectId: _subjectId,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openNotes() async {
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -134,22 +284,32 @@ class _ClassJournalScreenState extends State<ClassJournalScreen> {
         ),
       ),
     );
+    if (mounted) setState(() {});
   }
 
-  List<AttendanceRecord> _attendanceForDay(List<AttendanceRecord> all) {
-    return all
-        .where((r) => r.isOnCalendarDay(_selectedDate))
+  List<AttendanceRecord> _attendanceForLesson(ScheduledJournalLesson lesson) {
+    return widget.store
+        .attendanceFor(widget.selectedClass)
+        .where((r) => r.isOnCalendarDay(lesson.lessonDate))
         .toList(growable: false);
   }
 
-  List<Homework> _homeworkDueAround(List<Homework> all) {
-    final subject = _selectedSubject;
-    return all
-        .where((h) {
-          if (subject != null && h.subject != subject) return false;
-          return true;
-        })
+  List<Grade> _gradesForSubject() {
+    final subject = _subjectId == null
+        ? null
+        : widget.store.subjectById(_subjectId!);
+    if (subject == null) return const [];
+    return widget.store
+        .gradesFor(widget.selectedClass)
+        .where((g) => g.subject == subject.name)
         .toList(growable: false);
+  }
+
+  List<Homework> _homeworkForSubject() {
+    return widget.store.homeworkFor(
+      widget.selectedClass,
+      subjectId: _subjectId,
+    );
   }
 
   @override
@@ -157,19 +317,47 @@ class _ClassJournalScreenState extends State<ClassJournalScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Хичээлийн журнал'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('Хичээлийн журнал'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Журналын түүх',
+            icon: const Icon(Icons.history),
+            onPressed: _loading || _noTimetable ? null : _openHistory,
+          ),
+        ],
+      ),
       body: ListenableBuilder(
         listenable: widget.store,
         builder: (context, _) {
-          final selectedSubject = _selectedSubject;
-          final students = widget.store.studentsFor(widget.selectedClass);
-          final attendance = _attendanceForDay(
-            widget.store.attendanceFor(widget.selectedClass),
-          );
-          final homework = _homeworkDueAround(
-            widget.store.homeworkFor(widget.selectedClass),
-          );
+          if (_loading) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (_noTimetable || _current == null) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.page),
+                child: Text(
+                  _statusMessage ??
+                      'Энэ анги, хичээлд хуваарь оруулаагүй байна.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyLarge,
+                ),
+              ),
+            );
+          }
+
+          final lesson = _current!;
+          final subject = widget.store.subjectById(lesson.subjectId);
+          final classLabel = '${lesson.classId} анги';
+          final subjectName = subject?.name ?? 'Хичээл';
+          final attendance = _attendanceForLesson(lesson);
+          final grades = _gradesForSubject();
+          final homework = _homeworkForSubject();
           final notes = widget.store.teacherNotesForClass(widget.selectedClass);
+          final notePreview = _occurrence?.note?.trim();
+          final gradedStudentIds = grades.map((g) => g.studentId).toSet();
 
           var present = 0;
           var late = 0;
@@ -180,208 +368,221 @@ class _ClassJournalScreenState extends State<ClassJournalScreen> {
             absent += record.absentCount;
           }
 
+          final dayLessons = JournalScheduleService.dedupeLessons(
+            _timeline.where(
+              (item) =>
+                  LessonOccurrence.dateOnly(item.lessonDate) ==
+                  LessonOccurrence.dateOnly(lesson.lessonDate),
+            ),
+          );
+          final periodItems = <DropdownMenuItem<String>>[
+            for (final item in dayLessons)
+              DropdownMenuItem(
+                value: item.occurrenceKey,
+                child: Text('${item.periodNumber}-р цаг · ${item.timeLabel}'),
+              ),
+          ];
+          final validKeys = periodItems.map((item) => item.value).toSet();
+          final safeSelectedKey = validKeys.contains(lesson.occurrenceKey)
+              ? lesson.occurrenceKey
+              : null;
+
           return ListView(
             padding: const EdgeInsets.all(AppSpacing.page),
             children: [
-              Text(
-                '${widget.selectedClass} анги',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.gap),
-              InkWell(
-                onTap: _pickDate,
-                borderRadius: BorderRadius.circular(AppSpacing.radius),
-                child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Огноо',
-                    border: OutlineInputBorder(),
-                    suffixIcon: Icon(Icons.calendar_today),
-                  ),
-                  child: Text(_dateLabel),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.gap),
-              DropdownButtonFormField<String>(
-                key: ValueKey(
-                  'journal-subject-${widget.selectedClass}-$selectedSubject',
-                ),
-                initialValue: selectedSubject,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Хичээл',
-                  border: OutlineInputBorder(),
-                ),
-                hint: const Text('Хичээл сонгох'),
-                items: widget.store.subjects
-                    .map(
-                      (subject) => DropdownMenuItem<String>(
-                        value: subject,
-                        child: Text(subject, overflow: TextOverflow.ellipsis),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  widget.store.setJournalSubject(widget.selectedClass, value);
-                },
-              ),
-              const SizedBox(height: AppSpacing.sectionSm),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.card),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Өнөөдрийн ирц',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.item),
-                      if (attendance.isEmpty)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(
-                          'Энэ өдөр ирц бүртгээгүй',
+                          '$classLabel · $subjectName',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          JournalScheduleService.mongolianDateLabel(
+                            lesson.lessonDate,
+                          ),
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                        Text(
+                          '${lesson.periodNumber}-р цаг · ${lesson.timeLabel}',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: AppColors.onSurfaceVariant,
                           ),
-                        )
-                      else
-                        Wrap(
-                          spacing: AppSpacing.item,
-                          runSpacing: AppSpacing.item,
-                          children: [
-                            StatusBadge(
-                              label: 'Ирсэн: $present',
-                              color: AppColors.present,
-                            ),
-                            StatusBadge(
-                              label: 'Хоцорсон: $late',
-                              color: AppColors.late,
-                            ),
-                            StatusBadge(
-                              label: 'Тасалсан: $absent',
-                              color: AppColors.absent,
-                            ),
-                          ],
                         ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Сурагч: ${students.length}',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.gap),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.card),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Даалгавар',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.itemSm),
-                      Text(
-                        homework.isEmpty
-                            ? 'Даалгавар байхгүй'
-                            : '${homework.length} даалгавар',
-                      ),
-                      if (homework.isNotEmpty) ...[
-                        const SizedBox(height: AppSpacing.item),
-                        ...homework.take(3).map((h) {
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text('• ${h.title} (${h.dueDate})'),
-                          );
-                        }),
                       ],
-                    ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Журналын түүх',
+                    icon: const Icon(Icons.calendar_month_outlined),
+                    onPressed: _openHistory,
+                  ),
+                ],
+              ),
+              if (_statusMessage != null) ...[
+                const SizedBox(height: AppSpacing.itemSm),
+                Text(
+                  _statusMessage!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: AppColors.onSurfaceVariant,
                   ),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.gap),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.card),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Багшийн тэмдэглэл',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.itemSm),
-                      Text(
-                        notes.isEmpty
-                            ? 'Тэмдэглэл байхгүй'
-                            : '${notes.length} зөвлөгөө',
-                      ),
-                    ],
+              ],
+              if (dayLessons.isEmpty) ...[
+                const SizedBox(height: AppSpacing.gap),
+                Text(
+                  'Энэ өдөр тохирох хичээл олдсонгүй.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: AppColors.onSurfaceVariant,
                   ),
                 ),
-              ),
+              ] else if (dayLessons.length > 1 && periodItems.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.gap),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('period-select-$safeSelectedKey'),
+                  initialValue: safeSelectedKey,
+                  decoration: const InputDecoration(
+                    labelText: 'Цаг',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: periodItems,
+                  onChanged: (key) async {
+                    if (key == null) return;
+                    ScheduledJournalLesson? match;
+                    for (final item in dayLessons) {
+                      if (item.occurrenceKey == key) {
+                        match = item;
+                        break;
+                      }
+                    }
+                    if (match != null) await _selectLesson(match);
+                  },
+                ),
+              ],
               const SizedBox(height: AppSpacing.sectionSm),
-              Text(
-                'Үйлдлүүд',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.gap),
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final buttonWidth = (constraints.maxWidth - 8) / 2;
+                  final width = (constraints.maxWidth - 8) / 2;
                   return Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
                       _JournalActionButton(
-                        width: buttonWidth,
+                        width: width,
                         icon: Icons.fact_check,
                         label: 'Ирц авах',
-                        onPressed: _openAttendance,
+                        onPressed: _canEdit ? _openAttendance : null,
                       ),
                       _JournalActionButton(
-                        width: buttonWidth,
+                        width: width,
                         icon: Icons.grade,
                         label: 'Дүн оруулах',
-                        onPressed: _openBulkGrades,
+                        onPressed: _canEdit ? _openGrades : null,
                       ),
                       _JournalActionButton(
-                        width: buttonWidth,
+                        width: width,
                         icon: Icons.assignment,
                         label: 'Даалгавар',
                         onPressed: _openHomework,
                       ),
                       _JournalActionButton(
-                        width: buttonWidth,
-                        icon: Icons.assignment_add,
-                        label: 'Шинэ даалгавар',
-                        onPressed: _openHomeworkCreate,
-                      ),
-                      _JournalActionButton(
-                        width: buttonWidth,
-                        icon: Icons.lightbulb_outline,
-                        label: 'Зөвлөгөө',
-                        onPressed: _openTeacherNotes,
+                        width: width,
+                        icon: Icons.sticky_note_2_outlined,
+                        label: 'Тэмдэглэл',
+                        onPressed: _openNotes,
                       ),
                     ],
                   );
                 },
               ),
+              const SizedBox(height: AppSpacing.sectionSm),
+              Text(
+                'Өнөөдрийн бүртгэл',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.item),
+              _SummaryCard(
+                title: 'Ирц',
+                body: attendance.isEmpty
+                    ? 'Ирц бүртгээгүй'
+                    : 'Ирсэн: $present · Тасалсан: $absent · Хоцорсон: $late',
+                onTap: _canEdit ? _openAttendance : null,
+              ),
+              _SummaryCard(
+                title: 'Дүн / үнэлгээ',
+                body: gradedStudentIds.isEmpty
+                    ? 'Дүн бүртгээгүй'
+                    : '${gradedStudentIds.length} сурагчид дүн авсан',
+                onTap: _canEdit ? _openGrades : null,
+              ),
+              _SummaryCard(
+                title: 'Даалгавар',
+                body: homework.isEmpty
+                    ? 'Даалгавар байхгүй'
+                    : '${homework.length} · ${homework.first.title}',
+                onTap: _openHomework,
+              ),
+              _SummaryCard(
+                title: 'Багшийн тэмдэглэл',
+                body: (notePreview == null || notePreview.isEmpty)
+                    ? (notes.isEmpty
+                          ? 'Тэмдэглэл байхгүй'
+                          : notes.first.message)
+                    : notePreview,
+                onTap: _openNotes,
+              ),
+              const SizedBox(height: AppSpacing.sectionSm),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => _goRelative(-1),
+                      child: const Text('Өмнөх хичээл'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => _goRelative(1),
+                      child: const Text('Дараагийн хичээл'),
+                    ),
+                  ),
+                ],
+              ),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({required this.title, required this.body, this.onTap});
+
+  final String title;
+  final String body;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: ListTile(
+        title: Text(title, style: theme.textTheme.titleSmall),
+        subtitle: Text(body),
+        trailing: onTap == null ? null : const Icon(Icons.chevron_right),
+        onTap: onTap,
       ),
     );
   }
@@ -398,7 +599,7 @@ class _JournalActionButton extends StatelessWidget {
   final double width;
   final IconData icon;
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {

@@ -73,14 +73,15 @@ void main() {
     expect(find.text('Харах'), findsNothing);
   });
 
-  testWidgets('class selector is in the header with greeting', (tester) async {
+  testWidgets('subject workspace shows fixed class·subject header chip', (
+    tester,
+  ) async {
     await pumpDashboard(tester);
 
     expect(find.textContaining('Сайн байна уу,'), findsOneWidget);
-    expect(find.textContaining('DASH6А анги'), findsOneWidget);
-    // Only one class selector on the dashboard.
-    expect(find.textContaining('анги'), findsWidgets);
-    expect(find.byTooltip('Анги сонгох'), findsOneWidget);
+    expect(find.textContaining('DASH6А анги · DashМат'), findsOneWidget);
+    // Subject-locked workspace: no redundant class selector.
+    expect(find.byTooltip('Анги сонгох'), findsNothing);
   });
 
   testWidgets('narrow viewport header does not overflow', (tester) async {
@@ -90,7 +91,15 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.textContaining('Сайн байна уу,'), findsOneWidget);
+    expect(find.textContaining('DASH6А анги · DashМат'), findsOneWidget);
+  });
+
+  testWidgets('homeroom overview keeps class selector', (tester) async {
+    await store.setTeacherWorkspace(classId: 'DASH6А', subjectId: null);
+    await pumpDashboard(tester);
+
     expect(find.byTooltip('Анги сонгох'), findsOneWidget);
+    expect(find.textContaining('DASH6А анги'), findsWidgets);
   });
 
   testWidgets('three compact action cards appear before summary cards', (

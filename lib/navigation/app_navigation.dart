@@ -88,11 +88,13 @@ abstract final class AppNavigation {
     _replace(context, GuardianHomeScreen(store: store));
   }
 
+  /// Opens the teacher workspace as the authenticated root (no empty route under it).
   static void openTeacherWorkspace(BuildContext context, AppStore store) {
-    Navigator.of(context).push(
+    Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
         builder: (context) => TeacherWorkspaceScreen(store: store),
       ),
+      (route) => false,
     );
   }
 

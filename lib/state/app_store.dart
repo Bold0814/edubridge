@@ -11,6 +11,7 @@ import '../models/grade.dart';
 import '../models/guardian.dart';
 import '../models/guardian_student.dart';
 import '../models/homework.dart';
+import '../models/lesson_occurrence.dart';
 import '../models/school.dart';
 import '../models/school_class.dart';
 import '../models/school_settings.dart';
@@ -29,6 +30,33 @@ import '../services/password_rules.dart';
 import '../services/phone_normalizer.dart';
 import '../services/pin_rules.dart';
 import '../services/student_login_ids.dart';
+
+/// First-time admin setup checklist, derived from stored school data.
+class SchoolSetupProgress {
+  const SchoolSetupProgress({
+    required this.hasSchoolInfo,
+    required this.hasTeacher,
+    required this.hasClass,
+    required this.hasSubject,
+    required this.hasAssignment,
+    required this.hasTimetable,
+  });
+
+  final bool hasSchoolInfo;
+  final bool hasTeacher;
+  final bool hasClass;
+  final bool hasSubject;
+  final bool hasAssignment;
+  final bool hasTimetable;
+
+  bool get isComplete =>
+      hasSchoolInfo &&
+      hasTeacher &&
+      hasClass &&
+      hasSubject &&
+      hasAssignment &&
+      hasTimetable;
+}
 
 enum SchoolResolveKind { none, single, multiple }
 
@@ -124,6 +152,7 @@ class AppStore extends ChangeNotifier {
   List<TeacherNote> _teacherNotes = [];
   List<LessonPeriod> _lessonPeriods = [];
   List<ClassTimetable> _classTimetable = [];
+  List<LessonOccurrence> _lessonOccurrences = [];
   List<Subject> _subjectModels = const [];
   List<Teacher> _teachers = const [];
   List<ClassSubjectTeacher> _assignments = const [];
@@ -154,6 +183,7 @@ class AppStore extends ChangeNotifier {
   int _teacherNoteIdCounter = 100;
   int _lessonPeriodIdCounter = 100;
   int _classTimetableIdCounter = 100;
+  int _lessonOccurrenceIdCounter = 100;
   int _teacherIdCounter = 100;
   int _guardianIdCounter = 100;
   int _userIdCounter = 100;
@@ -343,6 +373,100 @@ class AppStore extends ChangeNotifier {
   /// Subjects the active teacher teaches in [classId] (active subjects only).
   List<Subject> subjectsTaughtByActiveTeacherInClass(String classId) {
     return assignedClassForActiveTeacher(classId)?.subjects ?? const [];
+  }
+
+  static const subjectEditDeniedMessage =
+      'Та энэ хичээлийн мэдээллийг засах эрхгүй байна.';
+
+  /// True when the active teacher is the homeroom teacher of [classId].
+  bool isHomeroomTeacherOf(String classId) {
+    final teacherId = _activeContext.teacherId;
+    if (teacherId == null) return false;
+    final access = assignedClassForActiveTeacher(classId);
+    return access?.isHomeroom == true;
+  }
+
+  /// Homeroom overview: class open with no locked teaching subject.
+  bool isHomeroomOverviewOf(String classId) {
+    if (activeContext.subjectId != null) return false;
+    return isHomeroomTeacherOf(classId);
+  }
+
+  /// Edit permission for a specific class + subject assignment.
+  ///
+  /// Homeroom alone is never enough. Requires matching teacher assignment.
+  bool teacherCanEditClassSubject({
+    required String classId,
+    required int subjectId,
+  }) {
+    if (hasAdminPermissionForActiveSchool) return true;
+    final teacherId = _activeContext.teacherId;
+    if (teacherId == null) return false;
+    final schoolClass = schoolClassById(classId);
+    final resolvedClassId = schoolClass?.id ?? classId;
+    if (schoolClass != null && !_matchesActiveSchool(schoolClass.schoolId)) {
+      return false;
+    }
+    final subject = subjectById(subjectId);
+    if (subject == null || !subject.isActive) return false;
+    if (!_matchesActiveSchool(subject.schoolId)) return false;
+    return teacherIdForClassSubject(resolvedClassId, subjectId) == teacherId;
+  }
+
+  bool teacherCanEditSubjectNamed({
+    required String classId,
+    required String subjectName,
+  }) {
+    final subject = subjectByName(subjectName);
+    if (subject == null) return false;
+    return teacherCanEditClassSubject(classId: classId, subjectId: subject.id);
+  }
+
+  /// Whether the active teacher may edit the currently locked subject in [classId].
+  bool teacherCanEditActiveSubjectInClass(String classId) {
+    final subjectId = activeContext.subjectId;
+    if (subjectId == null) return false;
+    return teacherCanEditClassSubject(classId: classId, subjectId: subjectId);
+  }
+
+  bool _sameClassIdentity(String a, String b) {
+    if (a == b) return true;
+    final classA = schoolClassById(a);
+    final classB = schoolClassById(b);
+    if (classA != null && (classA.id == b || classA.name == b)) return true;
+    if (classB != null && (classB.id == a || classB.name == a)) return true;
+    return classA != null && classB != null && classA.id == classB.id;
+  }
+
+  /// Attendance writes require the active class+subject teaching context.
+  bool teacherCanWriteAttendance(String classId) {
+    final activeClass = activeContext.classId;
+    if (activeClass == null || !_sameClassIdentity(activeClass, classId)) {
+      return false;
+    }
+    return teacherCanEditActiveSubjectInClass(classId);
+  }
+
+  void _ensureCanEditSubjectNamed({
+    required String classId,
+    required String subjectName,
+  }) {
+    if (teacherCanEditSubjectNamed(
+      classId: classId,
+      subjectName: subjectName,
+    )) {
+      return;
+    }
+    final userId = _activeContext.userId ?? _selectedDevUserId;
+    if (userId == null) return;
+    throw const PermissionDeniedException(subjectEditDeniedMessage);
+  }
+
+  void _ensureCanWriteAttendance(String classId) {
+    if (teacherCanWriteAttendance(classId)) return;
+    final userId = _activeContext.userId ?? _selectedDevUserId;
+    if (userId == null) return;
+    throw const PermissionDeniedException(subjectEditDeniedMessage);
   }
 
   /// Switch dashboard class and resolve subject context.
@@ -554,6 +678,7 @@ class AppStore extends ChangeNotifier {
     _teacherNotes = await _repository.loadTeacherNotes();
     _lessonPeriods = await _repository.loadLessonPeriods();
     _classTimetable = await _repository.loadClassTimetable();
+    _lessonOccurrences = await _repository.loadLessonOccurrences();
 
     _attendanceByClass
       ..clear()
@@ -1586,10 +1711,35 @@ class AppStore extends ChangeNotifier {
     );
   }
 
-  /// Minimal setup complete when the school has at least one teacher and class.
-  bool get isSchoolSetupIncomplete {
-    return activeTeachers.isEmpty || classes.isEmpty;
+  /// First-time school setup checklist derived from stored school data.
+  SchoolSetupProgress get schoolSetupProgress {
+    final settings = _schoolSettings;
+    final hasSchoolInfo =
+        settings.schoolName.trim().isNotEmpty &&
+        settings.academicYear.trim().isNotEmpty &&
+        settings.currentSemester.trim().isNotEmpty;
+
+    final classIds = _visibleSchoolClasses.map((c) => c.id).toSet();
+    final hasAssignment = _assignments.any((a) => classIds.contains(a.classId));
+    final hasHomeroom = _visibleSchoolClasses.any(
+      (c) => (c.homeroomTeacherId ?? '').isNotEmpty,
+    );
+    final hasTimetable = _classTimetable.any(
+      (e) => classIds.contains(e.classId),
+    );
+
+    return SchoolSetupProgress(
+      hasSchoolInfo: hasSchoolInfo,
+      hasTeacher: activeTeachers.isNotEmpty,
+      hasClass: classes.isNotEmpty,
+      hasSubject: activeSubjects.isNotEmpty,
+      hasAssignment: hasAssignment || hasHomeroom,
+      hasTimetable: hasTimetable,
+    );
   }
+
+  /// True while any required first-time setup item is still missing.
+  bool get isSchoolSetupIncomplete => !schoolSetupProgress.isComplete;
 
   bool get hasTeacherWorkspaceAccess {
     final teacherId = _activeContext.teacherId;
@@ -2667,6 +2817,19 @@ class AppStore extends ChangeNotifier {
     final user = selectedDevelopmentUser;
     if (user == null) throw ArgumentError('NOT_FOUND');
     if (!user.requirePasswordChange) throw ArgumentError('NOT_REQUIRED');
+    await changeOwnPassword(
+      newPassword: newPassword,
+      confirmPassword: confirmPassword,
+    );
+  }
+
+  /// Voluntary password change for the signed-in account.
+  Future<void> changeOwnPassword({
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    final user = selectedDevelopmentUser ?? authenticatedUser;
+    if (user == null) throw ArgumentError('NOT_FOUND');
     final pwdError = PasswordRules.validateNewPassword(
       newPassword,
       confirmPassword,
@@ -2889,6 +3052,7 @@ class AppStore extends ChangeNotifier {
     bool allowDuplicate = false,
   }) async {
     _ensureCanManageSchoolStructure();
+    if (teacherById(teacher.id) == null) throw ArgumentError('NOT_FOUND');
     final name = teacher.fullName.trim();
     if (name.isEmpty) throw ArgumentError('EMPTY');
     final duplicate = _teachers.any(
@@ -2900,8 +3064,52 @@ class AppStore extends ChangeNotifier {
     if (duplicate && !allowDuplicate) {
       throw ArgumentError('DUPLICATE');
     }
-    final saved = teacher.copyWith(fullName: name);
-    await _repository.updateTeacher(saved);
+
+    final newPhone = PhoneNormalizer.normalize(teacher.phone);
+    final saved = teacher.copyWith(fullName: name, phone: newPhone);
+
+    final linked = loginAccountForTeacher(teacher.id);
+    UserAccount? updatedLogin;
+    if (linked != null) {
+      // Only teacher-role accounts linked by teacherId — never admin.
+      if (linked.role != AppRole.teacher) {
+        throw ArgumentError('UNSAFE_ACCOUNT_LINK');
+      }
+      final signedIn = selectedDevelopmentUser;
+      if (signedIn != null &&
+          signedIn.role == AppRole.admin &&
+          linked.id == signedIn.id) {
+        throw ArgumentError('UNSAFE_ACCOUNT_LINK');
+      }
+      if (linked.username.trim().toLowerCase() == 'admin') {
+        throw ArgumentError('UNSAFE_ACCOUNT_LINK');
+      }
+
+      final oldLoginPhone = PhoneNormalizer.normalize(linked.username);
+      if (newPhone != oldLoginPhone) {
+        if (newPhone.isEmpty) throw ArgumentError('EMPTY_PHONE');
+        final conflict = findAccountByLoginPhone(newPhone);
+        if (conflict != null && conflict.id != linked.id) {
+          throw ArgumentError('DUPLICATE_PHONE');
+        }
+        // Preserve hash, status, requirePasswordChange, teacherId, etc.
+        updatedLogin = linked.copyWith(username: newPhone);
+      }
+    }
+
+    if (updatedLogin != null) {
+      await _repository.updateTeacherAndLoginIdentifierTxn(
+        teacher: saved,
+        account: updatedLogin,
+      );
+      _userAccounts = [
+        for (final u in _userAccounts)
+          if (u.id == updatedLogin.id) updatedLogin else u,
+      ]..sort((a, b) => a.username.compareTo(b.username));
+    } else {
+      await _repository.updateTeacher(saved);
+    }
+
     _teachers = [
       for (final t in _teachers)
         if (t.id == saved.id) saved else t,
@@ -3104,6 +3312,12 @@ class AppStore extends ChangeNotifier {
       final n = int.tryParse(item.id.replaceFirst('tt-', ''));
       if (n != null && n > _classTimetableIdCounter) {
         _classTimetableIdCounter = n;
+      }
+    }
+    for (final item in _lessonOccurrences) {
+      final n = int.tryParse(item.id.replaceFirst('lo-', ''));
+      if (n != null && n > _lessonOccurrenceIdCounter) {
+        _lessonOccurrenceIdCounter = n;
       }
     }
     for (final item in _studentHomeworkStatuses) {
@@ -3409,6 +3623,128 @@ class AppStore extends ChangeNotifier {
   String nextClassTimetableId() {
     _classTimetableIdCounter += 1;
     return 'tt-$_classTimetableIdCounter';
+  }
+
+  String nextLessonOccurrenceId() {
+    _lessonOccurrenceIdCounter += 1;
+    return 'lo-$_lessonOccurrenceIdCounter';
+  }
+
+  List<LessonOccurrence> get lessonOccurrences =>
+      List.unmodifiable(_lessonOccurrences);
+
+  List<LessonOccurrence> lessonOccurrencesFor({
+    required String classId,
+    required int subjectId,
+    String? teacherId,
+  }) {
+    return _lessonOccurrences
+        .where((o) {
+          if (o.classId != classId || o.subjectId != subjectId) return false;
+          if (teacherId != null &&
+              teacherId.isNotEmpty &&
+              o.teacherId.isNotEmpty &&
+              o.teacherId != teacherId) {
+            return false;
+          }
+          if (activeSchoolId != null && o.schoolId != activeSchoolId) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
+  }
+
+  LessonOccurrence? findLessonOccurrence({
+    required String classId,
+    required int subjectId,
+    required DateTime lessonDate,
+    required String periodId,
+  }) {
+    final day = LessonOccurrence.dateOnly(lessonDate);
+    for (final o in _lessonOccurrences) {
+      if (o.classId == classId &&
+          o.subjectId == subjectId &&
+          o.periodId == periodId &&
+          LessonOccurrence.dateOnly(o.lessonDate) == day) {
+        if (activeSchoolId != null && o.schoolId != activeSchoolId) continue;
+        return o;
+      }
+    }
+    return null;
+  }
+
+  /// Creates the occurrence row if missing; never duplicates the identity key.
+  Future<LessonOccurrence> ensureLessonOccurrence({
+    required String classId,
+    required int subjectId,
+    required DateTime lessonDate,
+    required String periodId,
+    String? teacherId,
+    String? timetableEntryId,
+  }) async {
+    final existing = findLessonOccurrence(
+      classId: classId,
+      subjectId: subjectId,
+      lessonDate: lessonDate,
+      periodId: periodId,
+    );
+    if (existing != null) return existing;
+
+    final resolvedTeacher =
+        teacherId ??
+        _activeContext.teacherId ??
+        teacherIdForClassSubject(classId, subjectId) ??
+        '';
+    final occurrence = LessonOccurrence(
+      id: nextLessonOccurrenceId(),
+      schoolId: activeSchoolId ?? _effectiveSchoolId,
+      classId: classId,
+      subjectId: subjectId,
+      teacherId: resolvedTeacher,
+      lessonDate: LessonOccurrence.dateOnly(lessonDate),
+      periodId: periodId,
+      timetableEntryId: timetableEntryId,
+      createdAt: DateTime.now(),
+    );
+    try {
+      await _repository.insertLessonOccurrence(occurrence);
+      _lessonOccurrences = [occurrence, ..._lessonOccurrences];
+      notifyListeners();
+      return occurrence;
+    } catch (_) {
+      _lessonOccurrences = await _repository.loadLessonOccurrences();
+      notifyListeners();
+      return findLessonOccurrence(
+            classId: classId,
+            subjectId: subjectId,
+            lessonDate: lessonDate,
+            periodId: periodId,
+          ) ??
+          occurrence;
+    }
+  }
+
+  Future<void> updateLessonOccurrenceNote({
+    required String occurrenceId,
+    String? topic,
+    String? note,
+  }) async {
+    LessonOccurrence? current;
+    for (final item in _lessonOccurrences) {
+      if (item.id == occurrenceId) {
+        current = item;
+        break;
+      }
+    }
+    if (current == null) return;
+    final updated = current.copyWith(topic: topic, note: note);
+    await _repository.updateLessonOccurrence(updated);
+    _lessonOccurrences = [
+      for (final item in _lessonOccurrences)
+        if (item.id == updated.id) updated else item,
+    ];
+    notifyListeners();
   }
 
   List<LessonPeriod> get lessonPeriods {
@@ -3748,6 +4084,10 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addHomework(Homework homework) async {
+    _ensureCanEditSubjectNamed(
+      classId: homework.className,
+      subjectName: homework.subject,
+    );
     await _repository.insertHomework(homework);
     _homework.insert(0, homework);
 
@@ -3814,23 +4154,17 @@ class AppStore extends ChangeNotifier {
   }
 
   bool _canWriteHomeworkStatus(Homework homework) {
-    if (hasAdminPermissionForActiveSchool) return true;
-    final teacherId = _activeContext.teacherId;
-    if (teacherId == null) return false;
-    final access = assignedClassForActiveTeacher(homework.className);
-    if (access == null) return false;
-    final subject = subjectByName(homework.subject);
-    if (subject == null) return access.isHomeroom;
-    if (access.subjects.any((s) => s.id == subject.id)) return true;
-    return teacherIdForClassSubject(homework.className, subject.id) ==
-        teacherId;
+    return teacherCanEditSubjectNamed(
+      classId: homework.className,
+      subjectName: homework.subject,
+    );
   }
 
   void _ensureCanWriteHomeworkStatus(Homework homework) {
     if (_canWriteHomeworkStatus(homework)) return;
     final userId = _activeContext.userId ?? _selectedDevUserId;
     if (userId == null) return;
-    throw const PermissionDeniedException();
+    throw const PermissionDeniedException(subjectEditDeniedMessage);
   }
 
   Future<void> setStudentHomeworkStatus({
@@ -3884,6 +4218,10 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> updateHomework(Homework homework) async {
+    _ensureCanEditSubjectNamed(
+      classId: homework.className,
+      subjectName: homework.subject,
+    );
     await _repository.updateHomework(homework);
     final index = _homework.indexWhere((item) => item.id == homework.id);
     if (index >= 0) {
@@ -3893,6 +4231,19 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deleteHomework(String id) async {
+    Homework? existing;
+    for (final item in _homework) {
+      if (item.id == id) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing != null) {
+      _ensureCanEditSubjectNamed(
+        classId: existing.className,
+        subjectName: existing.subject,
+      );
+    }
     await _repository.deleteHomework(id);
     _homework.removeWhere((item) => item.id == id);
     _studentHomeworkStatuses = [
@@ -3925,6 +4276,10 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addGrade(Grade grade) async {
+    _ensureCanEditSubjectNamed(
+      classId: grade.className,
+      subjectName: grade.subject,
+    );
     await _repository.insertGrade(grade);
     _grades.insert(0, grade);
     notifyListeners();
@@ -3932,12 +4287,22 @@ class AppStore extends ChangeNotifier {
 
   Future<void> addGrades(List<Grade> grades) async {
     if (grades.isEmpty) return;
+    for (final grade in grades) {
+      _ensureCanEditSubjectNamed(
+        classId: grade.className,
+        subjectName: grade.subject,
+      );
+    }
     await _repository.insertGrades(grades);
     _grades.insertAll(0, grades);
     notifyListeners();
   }
 
   Future<void> updateGrade(Grade grade) async {
+    _ensureCanEditSubjectNamed(
+      classId: grade.className,
+      subjectName: grade.subject,
+    );
     await _repository.updateGrade(grade);
     final index = _grades.indexWhere((item) => item.id == grade.id);
     if (index >= 0) {
@@ -3947,12 +4312,26 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deleteGrade(String id) async {
+    Grade? existing;
+    for (final item in _grades) {
+      if (item.id == id) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing != null) {
+      _ensureCanEditSubjectNamed(
+        classId: existing.className,
+        subjectName: existing.subject,
+      );
+    }
     await _repository.deleteGrade(id);
     _grades.removeWhere((item) => item.id == id);
     notifyListeners();
   }
 
   Future<void> addAttendance(String className, AttendanceRecord record) async {
+    _ensureCanWriteAttendance(className);
     await _repository.insertAttendance(record);
     final records = _attendanceByClass.putIfAbsent(
       className,
@@ -3963,6 +4342,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> updateAttendance(AttendanceRecord record) async {
+    _ensureCanWriteAttendance(record.className);
     await _repository.updateAttendance(record);
     final records = _attendanceByClass[record.className];
     if (records == null) return;
@@ -3973,6 +4353,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deleteAttendance(String className, String id) async {
+    _ensureCanWriteAttendance(className);
     await _repository.deleteAttendance(id);
     _attendanceByClass[className]?.removeWhere((item) => item.id == id);
     notifyListeners();

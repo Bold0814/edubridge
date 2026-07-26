@@ -78,6 +78,17 @@ class HomeworkScreen extends StatelessWidget {
       await _openStatus(context, item);
       return;
     }
+    if (action == 'edit' || action == 'delete') {
+      if (!store.teacherCanEditSubjectNamed(
+        classId: selectedClass,
+        subjectName: item.subject,
+      )) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.subjectEditDeniedMessage)),
+        );
+        return;
+      }
+    }
     if (action == 'edit') {
       await _openCreateScreen(context, existing: item);
       return;
@@ -85,7 +96,15 @@ class HomeworkScreen extends StatelessWidget {
     if (action == 'delete') {
       final ok = await confirmDelete(context);
       if (!ok) return;
-      await store.deleteHomework(item.id);
+      try {
+        await store.deleteHomework(item.id);
+      } on PermissionDeniedException catch (e) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+        return;
+      }
       if (!context.mounted) return;
       showDeletedSnackBar(context);
     }
@@ -143,11 +162,14 @@ class HomeworkScreen extends StatelessWidget {
 
         return Scaffold(
           appBar: AppBar(title: Text(title), centerTitle: true),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _openCreateScreen(context),
-            tooltip: 'Шинэ даалгавар',
-            child: const Icon(Icons.add),
-          ),
+          floatingActionButton:
+              store.teacherCanEditActiveSubjectInClass(selectedClass)
+              ? FloatingActionButton(
+                  onPressed: () => _openCreateScreen(context),
+                  tooltip: 'Шинэ даалгавар',
+                  child: const Icon(Icons.add),
+                )
+              : null,
           body: isEmpty
               ? Center(
                   child: Padding(

@@ -217,16 +217,19 @@ class _StudentGradeDetailScreenState extends State<StudentGradeDetailScreen> {
 
         return Scaffold(
           appBar: AppBar(title: Text(_title), centerTitle: true),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _openCreate(
-              subjectName: _showRecords
-                  ? _subjectName
-                  : widget.store.activeSubjectName ??
-                        widget.store.journalSubjectFor(widget.classId),
-            ),
-            tooltip: 'Дүн оруулах',
-            child: const Icon(Icons.add),
-          ),
+          floatingActionButton:
+              widget.store.teacherCanEditActiveSubjectInClass(widget.classId)
+              ? FloatingActionButton(
+                  onPressed: () => _openCreate(
+                    subjectName: _showRecords
+                        ? _subjectName
+                        : widget.store.activeSubjectName ??
+                              widget.store.journalSubjectFor(widget.classId),
+                  ),
+                  tooltip: 'Дүн оруулах',
+                  child: const Icon(Icons.add),
+                )
+              : null,
           body: switch (_loadState) {
             _GradeLoadState.loading => const Center(
               child: CircularProgressIndicator(),

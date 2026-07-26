@@ -28,6 +28,13 @@ class AdminSchoolHomeScreen extends StatelessWidget {
     );
   }
 
+  void _openSetup(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => SchoolSetupScreen(store: store)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -36,6 +43,7 @@ class AdminSchoolHomeScreen extends StatelessWidget {
       listenable: store,
       builder: (context, _) {
         final schoolName = store.activeSchool?.name ?? 'Сургууль';
+        final showSetupShortcut = store.isSchoolSetupIncomplete;
 
         return AdminPermissionGate(
           store: store,
@@ -44,19 +52,19 @@ class AdminSchoolHomeScreen extends StatelessWidget {
               title: const EduBridgeLogo(size: 28),
               centerTitle: true,
               actions: [
-                IconButton(
-                  tooltip: 'Бэлтгэл',
-                  icon: const Icon(Icons.checklist_outlined),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => SchoolSetupScreen(store: store),
-                      ),
-                    );
-                  },
+                if (showSetupShortcut)
+                  IconButton(
+                    key: const Key('admin_setup_shortcut'),
+                    tooltip: 'Сургуулийн бэлтгэл',
+                    icon: const Icon(Icons.checklist_outlined),
+                    onPressed: () => _openSetup(context),
+                  ),
+                SessionMenuButton(
+                  store: store,
+                  showChangeContext: false,
+                  showSchoolSetupProgress: true,
+                  onOpenSchoolSetup: () => _openSetup(context),
                 ),
-                SessionMenuButton(store: store, showChangeContext: false),
               ],
             ),
             body: ListView(

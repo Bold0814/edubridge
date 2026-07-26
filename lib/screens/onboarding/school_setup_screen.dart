@@ -5,12 +5,16 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/edubridge_logo.dart';
 import '../../widgets/session_menu_button.dart';
 import '../admin/admin_school_home_screen.dart';
-import '../admin/school_students_hub_screen.dart';
 import '../class_list_screen.dart';
+import '../class_teacher_assignment_screen.dart';
+import '../class_timetable_settings_screen.dart';
+import '../settings_screen.dart';
 import '../subjects_settings_screen.dart';
 import '../teacher_list_screen.dart';
 
-/// First-time school setup — four essentials only.
+/// First-time school setup checklist (admin only).
+///
+/// Completion flags come from stored school data via [AppStore.schoolSetupProgress].
 class SchoolSetupScreen extends StatelessWidget {
   const SchoolSetupScreen({super.key, required this.store});
 
@@ -40,14 +44,11 @@ class SchoolSetupScreen extends StatelessWidget {
       listenable: store,
       builder: (context, _) {
         final schoolName = store.activeSchool?.name ?? 'Сургууль';
-        final hasTeachers = store.activeTeachers.isNotEmpty;
-        final hasClasses = store.classes.isNotEmpty;
-        final hasSubjects = store.activeSubjects.isNotEmpty;
-        final hasStudents = store.studentsInActiveSchool.isNotEmpty;
+        final progress = store.schoolSetupProgress;
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Сургуулиа бэлтгэх'),
+            title: const Text('Сургуулийн бэлтгэл'),
             actions: [
               SessionMenuButton(store: store, showChangeContext: false),
             ],
@@ -69,7 +70,7 @@ class SchoolSetupScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Сургуулиа бэлтгэх',
+                  'Сургуулийн бэлтгэл',
                   textAlign: TextAlign.center,
                   style: theme.textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w700,
@@ -78,35 +79,55 @@ class SchoolSetupScreen extends StatelessWidget {
                 const SizedBox(height: AppSpacing.sectionSm),
                 _SetupTile(
                   index: 1,
-                  title: 'Багш нар',
-                  done: hasTeachers,
-                  onTap: () => _open(context, TeacherListScreen(store: store)),
+                  title: 'Сургуулийн мэдээлэл',
+                  done: progress.hasSchoolInfo,
+                  onTap: () => _open(context, SettingsScreen(store: store)),
                 ),
                 _SetupTile(
                   index: 2,
-                  title: 'Ангиуд',
-                  done: hasClasses,
-                  onTap: () => _open(context, ClassListScreen(store: store)),
+                  title: 'Багш бүртгэх',
+                  done: progress.hasTeacher,
+                  onTap: () => _open(context, TeacherListScreen(store: store)),
                 ),
                 _SetupTile(
                   index: 3,
-                  title: 'Хичээлүүд',
-                  done: hasSubjects,
+                  title: 'Анги үүсгэх',
+                  done: progress.hasClass,
+                  onTap: () => _open(context, ClassListScreen(store: store)),
+                ),
+                _SetupTile(
+                  index: 4,
+                  title: 'Хичээл үүсгэх',
+                  done: progress.hasSubject,
                   onTap: () =>
                       _open(context, SubjectsSettingsScreen(store: store)),
                 ),
                 _SetupTile(
-                  index: 4,
-                  title: 'Сурагчид',
-                  done: hasStudents,
+                  index: 5,
+                  title: 'Багш, ангийг оноох',
+                  done: progress.hasAssignment,
                   onTap: () {
-                    if (!hasClasses) {
+                    if (!progress.hasClass) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Эхлээд анги үүсгэнэ үү')),
                       );
                       return;
                     }
-                    _open(context, SchoolStudentsHubScreen(store: store));
+                    _open(context, ClassTeacherAssignmentScreen(store: store));
+                  },
+                ),
+                _SetupTile(
+                  index: 6,
+                  title: 'Хичээлийн хуваарь оруулах',
+                  done: progress.hasTimetable,
+                  onTap: () {
+                    if (!progress.hasClass) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Эхлээд анги үүсгэнэ үү')),
+                      );
+                      return;
+                    }
+                    _open(context, ClassTimetableSettingsScreen(store: store));
                   },
                 ),
                 const SizedBox(height: AppSpacing.section),

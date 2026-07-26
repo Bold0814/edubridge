@@ -11,6 +11,7 @@ import '../models/grade.dart';
 import '../models/guardian.dart';
 import '../models/guardian_student.dart';
 import '../models/homework.dart';
+import '../models/lesson_occurrence.dart';
 import '../models/school.dart';
 import '../models/school_class.dart';
 import '../models/school_settings.dart';
@@ -806,6 +807,72 @@ class EduBridgeRepository {
     await _db.delete('class_timetable', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<List<LessonOccurrence>> loadLessonOccurrences() async {
+    final rows = await _db.query(
+      'lesson_occurrences',
+      orderBy: 'lesson_date DESC, created_at DESC',
+    );
+    return rows.map(_lessonOccurrenceFromRow).toList();
+  }
+
+  Future<void> insertLessonOccurrence(LessonOccurrence occurrence) async {
+    await _db.insert(
+      'lesson_occurrences',
+      _lessonOccurrenceToRow(occurrence),
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+  }
+
+  Future<void> upsertLessonOccurrence(LessonOccurrence occurrence) async {
+    await _db.insert(
+      'lesson_occurrences',
+      _lessonOccurrenceToRow(occurrence),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  Future<void> updateLessonOccurrence(LessonOccurrence occurrence) async {
+    await _db.update(
+      'lesson_occurrences',
+      _lessonOccurrenceToRow(occurrence),
+      where: 'id = ?',
+      whereArgs: [occurrence.id],
+    );
+  }
+
+  Map<String, Object?> _lessonOccurrenceToRow(LessonOccurrence o) => {
+    'id': o.id,
+    'school_id': o.schoolId,
+    'class_id': o.classId,
+    'subject_id': o.subjectId,
+    'teacher_id': o.teacherId,
+    'lesson_date': o.lessonDateKey,
+    'period_id': o.periodId,
+    'timetable_entry_id': o.timetableEntryId,
+    'topic': o.topic,
+    'note': o.note,
+    'created_at': o.createdAt.toIso8601String(),
+  };
+
+  LessonOccurrence _lessonOccurrenceFromRow(Map<String, Object?> row) {
+    final dateKey = row['lesson_date']! as String;
+    return LessonOccurrence(
+      id: row['id']! as String,
+      schoolId: row['school_id']! as String,
+      classId: row['class_id']! as String,
+      subjectId: row['subject_id']! as int,
+      teacherId: row['teacher_id']! as String,
+      lessonDate: LessonOccurrence.tryParseDateKey(dateKey) ?? DateTime.now(),
+      periodId: row['period_id']! as String,
+      timetableEntryId: row['timetable_entry_id'] as String?,
+      topic: row['topic'] as String?,
+      note: row['note'] as String?,
+      createdAt:
+          DateTime.tryParse(row['created_at'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
+
   // --- School settings ---
 
   Future<SchoolSettings> loadSchoolSettings({String? schoolId}) async {
@@ -978,6 +1045,27 @@ class EduBridgeRepository {
       where: 'id = ?',
       whereArgs: [teacher.id],
     );
+  }
+
+  /// Updates teacher profile and linked login username atomically.
+  Future<void> updateTeacherAndLoginIdentifierTxn({
+    required Teacher teacher,
+    required UserAccount account,
+  }) async {
+    await _db.transaction((txn) async {
+      await txn.update(
+        'teachers',
+        _teacherToRow(teacher),
+        where: 'id = ?',
+        whereArgs: [teacher.id],
+      );
+      await txn.update(
+        'user_accounts',
+        _userToRow(account),
+        where: 'id = ?',
+        whereArgs: [account.id],
+      );
+    });
   }
 
   Future<bool> teacherIsLinked(String teacherId) async {

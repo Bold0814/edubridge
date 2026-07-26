@@ -1,4 +1,9 @@
 /// Normalizes phone numbers for lookup/login within a school.
+///
+/// Canonical stored format (teacher profile + teacher login username):
+/// digits-only local mobile, no spaces/hyphens/parentheses, no leading `+` or
+/// country code. Examples that all store as `85406262`:
+/// `85406262`, `85 406 262`, `+97685406262`, `976-8540-6262`.
 abstract final class PhoneNormalizer {
   /// Canonical phone for storage and comparison.
   ///

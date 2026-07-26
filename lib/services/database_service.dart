@@ -15,7 +15,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'edubridge.db';
-  static const _dbVersion = 14;
+  static const _dbVersion = 15;
 
   /// Default school for single-school installs and migrated data.
   static const defaultSchoolId = 'sch-default';
@@ -138,6 +138,9 @@ class DatabaseService {
     }
     if (oldVersion < 14) {
       await _migrateRequirePasswordChangeV14(db);
+    }
+    if (oldVersion < 15) {
+      await _migrateLessonOccurrencesV15(db);
     }
   }
 
@@ -304,6 +307,7 @@ class DatabaseService {
     await _createTimetableTables(db);
     await _createSchoolContextTables(db);
     await _createStabilizationV13Tables(db);
+    await _createLessonOccurrencesTable(db);
     await _insertDefaultSchool(db);
 
     const classNames = [
@@ -980,6 +984,30 @@ class DatabaseService {
         'INTEGER NOT NULL DEFAULT 0',
       );
     } catch (_) {}
+  }
+
+  Future<void> _createLessonOccurrencesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS lesson_occurrences (
+        id TEXT PRIMARY KEY,
+        school_id TEXT NOT NULL,
+        class_id TEXT NOT NULL,
+        subject_id INTEGER NOT NULL,
+        teacher_id TEXT NOT NULL,
+        lesson_date TEXT NOT NULL,
+        period_id TEXT NOT NULL,
+        timetable_entry_id TEXT,
+        topic TEXT,
+        note TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(school_id, class_id, subject_id, lesson_date, period_id)
+      )
+    ''');
+  }
+
+  /// Schedule-driven class journal occurrences.
+  Future<void> _migrateLessonOccurrencesV15(Database db) async {
+    await _createLessonOccurrencesTable(db);
   }
 }
 

@@ -42,44 +42,38 @@ void main() {
     await database.close();
   });
 
-  testWidgets('setup screen shows only four items', (tester) async {
+  testWidgets('setup screen shows checklist essentials', (tester) async {
     await tester.pumpWidget(MaterialApp(home: SchoolSetupScreen(store: store)));
     await tester.pump();
 
-    expect(find.text('Багш нар'), findsOneWidget);
-    expect(find.text('Ангиуд'), findsOneWidget);
-    expect(find.text('Хичээлүүд'), findsOneWidget);
-    expect(find.text('Сурагчид'), findsOneWidget);
+    expect(find.text('Сургуулийн бэлтгэл'), findsWidgets);
+    expect(find.text('Сургуулийн мэдээлэл'), findsOneWidget);
+    expect(find.text('Багш бүртгэх'), findsOneWidget);
+    expect(find.text('Анги үүсгэх'), findsOneWidget);
+    expect(find.text('Хичээл үүсгэх'), findsOneWidget);
+    expect(find.text('Багш, ангийг оноох'), findsOneWidget);
+    expect(find.text('Хичээлийн хуваарь оруулах'), findsOneWidget);
 
-    expect(find.text('Анги ба багш'), findsNothing);
+    // Management hub routes are not duplicated as home-style cards here.
+    expect(find.text('Сурагчид'), findsNothing);
     expect(find.text('Асран хамгаалагчид'), findsNothing);
-    expect(find.text('Хичээлийн хуваарь'), findsNothing);
     expect(find.text('Багшийн ажлын хэсэг'), findsNothing);
     expect(find.text('Ажлын хэсэг рүү орох'), findsOneWidget);
   });
 
-  testWidgets('completion indicators for four essentials', (tester) async {
+  testWidgets('completion indicators for setup checklist', (tester) async {
     await tester.pumpWidget(MaterialApp(home: SchoolSetupScreen(store: store)));
     await tester.pump();
 
     expect(store.activeTeachers, isNotEmpty);
+    expect(store.schoolSetupProgress.hasTeacher, isTrue);
 
     await store.addSchoolClass(name: 'SU5А');
     await store.addSubject('SetupХичээл');
-    await store.addStudent(
-      Student(
-        id: store.nextStudentId('SU5А'),
-        className: 'SU5А',
-        lastName: 'Бат',
-        firstName: 'Болд',
-        gender: StudentGender.male,
-      ),
-    );
 
     await tester.pump();
     expect(store.classes, contains('SU5А'));
     expect(store.activeSubjects.any((s) => s.name == 'SetupХичээл'), isTrue);
-    expect(store.studentsInActiveSchool, isNotEmpty);
     expect(find.byIcon(Icons.check), findsWidgets);
   });
 

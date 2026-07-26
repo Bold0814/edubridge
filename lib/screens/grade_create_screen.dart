@@ -14,6 +14,7 @@ class GradeCreateScreen extends StatefulWidget {
     this.initialStudent,
     this.initialSubject,
     this.initialTerm,
+    this.lockSubject = false,
   });
 
   final String className;
@@ -22,6 +23,7 @@ class GradeCreateScreen extends StatefulWidget {
   final Student? initialStudent;
   final String? initialSubject;
   final String? initialTerm;
+  final bool lockSubject;
 
   @override
   State<GradeCreateScreen> createState() => _GradeCreateScreenState();
@@ -30,7 +32,17 @@ class GradeCreateScreen extends StatefulWidget {
 class _GradeCreateScreenState extends State<GradeCreateScreen> {
   List<String> get _terms => SchoolSettings.semesterOptions;
 
-  List<String> get _subjects => widget.store.subjects;
+  List<String> get _subjects {
+    final taught = widget.store
+        .subjectsTaughtByActiveTeacherInClass(widget.className)
+        .map((s) => s.name)
+        .toList();
+    if (taught.isNotEmpty) return taught;
+    if (widget.store.hasAdminPermissionForActiveSchool) {
+      return widget.store.subjects;
+    }
+    return taught;
+  }
 
   final _formKey = GlobalKey<FormState>();
   final _scoreController = TextEditingController();
@@ -67,9 +79,19 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
       if (initialStudent != null) {
         _selectedStudent = initialStudent;
       }
-      final initialSubject = widget.initialSubject;
-      if (initialSubject != null && _subjects.contains(initialSubject)) {
+      final lockedName = widget.store.activeContext.subjectId != null
+          ? widget.store
+                .subjectById(widget.store.activeContext.subjectId!)
+                ?.name
+          : null;
+      final initialSubject = lockedName ?? widget.initialSubject;
+      if (initialSubject != null &&
+          (_subjects.contains(initialSubject) ||
+              widget.lockSubject ||
+              lockedName != null)) {
         _selectedSubject = initialSubject;
+      } else if (_subjects.length == 1) {
+        _selectedSubject = _subjects.first;
       }
       final initialTerm = widget.initialTerm;
       if (initialTerm != null && _terms.contains(initialTerm)) {
@@ -110,10 +132,18 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
       letterGrade: Grade.letterFromScore(num.parse(scoreText)),
     );
 
-    if (existing != null) {
-      await widget.store.updateGrade(grade);
-    } else {
-      await widget.store.addGrade(grade);
+    try {
+      if (existing != null) {
+        await widget.store.updateGrade(grade);
+      } else {
+        await widget.store.addGrade(grade);
+      }
+    } on PermissionDeniedException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+      return;
     }
 
     if (!mounted) return;
@@ -184,34 +214,45 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
               },
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              key: ValueKey('grade-subject-$_selectedSubject'),
-              initialValue: _selectedSubject,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Хичээл',
-                border: OutlineInputBorder(),
+            if ((widget.lockSubject ||
+                    widget.store.activeContext.subjectId != null) &&
+                _selectedSubject != null)
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Хичээл',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(_selectedSubject!),
+              )
+            else
+              DropdownButtonFormField<String>(
+                key: ValueKey('grade-subject-$_selectedSubject'),
+                initialValue: _selectedSubject,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Хичээл',
+                  border: OutlineInputBorder(),
+                ),
+                hint: const Text('Хичээл сонгох'),
+                icon: const Icon(Icons.arrow_drop_down),
+                items: _subjects
+                    .map(
+                      (subject) => DropdownMenuItem<String>(
+                        value: subject,
+                        child: Text(subject, overflow: TextOverflow.ellipsis),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  setState(() => _selectedSubject = value);
+                },
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Хичээлээ сонгоно уу';
+                  }
+                  return null;
+                },
               ),
-              hint: const Text('Хичээл сонгох'),
-              icon: const Icon(Icons.arrow_drop_down),
-              items: _subjects
-                  .map(
-                    (subject) => DropdownMenuItem<String>(
-                      value: subject,
-                      child: Text(subject, overflow: TextOverflow.ellipsis),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                setState(() => _selectedSubject = value);
-              },
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Хичээлээ сонгоно уу';
-                }
-                return null;
-              },
-            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _scoreController,

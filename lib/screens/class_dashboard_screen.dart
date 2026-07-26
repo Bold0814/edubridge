@@ -85,16 +85,33 @@ class ClassDashboardScreen extends StatelessWidget {
     BuildContext context, {
     String? className,
     String? subjectName,
+    int? subjectId,
+    String? periodId,
   }) async {
     final targetClass = className ?? selectedClass;
+    var resolvedSubjectId = subjectId ?? store.activeContext.subjectId;
+    if (resolvedSubjectId == null && subjectName != null) {
+      resolvedSubjectId = store.subjectByName(subjectName)?.id;
+    }
     if (subjectName != null) {
       store.setJournalSubject(targetClass, subjectName);
     }
+    if (resolvedSubjectId != null) {
+      await store.setTeacherWorkspace(
+        classId: targetClass,
+        subjectId: resolvedSubjectId,
+      );
+    }
+    if (!context.mounted) return;
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            ClassJournalScreen(selectedClass: targetClass, store: store),
+        builder: (context) => ClassJournalScreen(
+          selectedClass: targetClass,
+          store: store,
+          subjectId: resolvedSubjectId,
+          initialPeriodId: periodId,
+        ),
       ),
     );
     if (!context.mounted) return;
@@ -128,6 +145,8 @@ class ClassDashboardScreen extends StatelessWidget {
           className: className ?? selectedClass,
           store: store,
           initialSubject: subjectName,
+          lockSubject:
+              store.activeContext.subjectId != null || subjectName != null,
         ),
       ),
     );
@@ -206,6 +225,22 @@ class ClassDashboardScreen extends StatelessWidget {
     return store.subjectById(subjectId)?.name;
   }
 
+  Future<void> _enterSubjectWorkspace(
+    BuildContext context, {
+    required int subjectId,
+  }) async {
+    await store.setTeacherWorkspace(
+      classId: selectedClass,
+      subjectId: subjectId,
+    );
+    final subject = store.subjectById(subjectId);
+    if (subject != null) {
+      store.setJournalSubject(selectedClass, subject.name);
+    }
+    if (!context.mounted) return;
+    // Rebuild via ListenableBuilder; stay on same route with locked subject.
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -220,6 +255,14 @@ class ClassDashboardScreen extends StatelessWidget {
           selectedClass,
         );
         final subjectLabel = _activeSubjectLabel();
+        final subjectLocked = store.activeContext.subjectId != null;
+        final canEditSubject = store.teacherCanEditActiveSubjectInClass(
+          selectedClass,
+        );
+        final isHomeroomOverview = store.isHomeroomOverviewOf(selectedClass);
+        final taughtHere = store.subjectsTaughtByActiveTeacherInClass(
+          selectedClass,
+        );
 
         return ListView(
           padding: const EdgeInsets.fromLTRB(_page, 12, _page, 24),
@@ -233,7 +276,34 @@ class ClassDashboardScreen extends StatelessWidget {
               selectedClass: selectedClass,
               subjectLabel: subjectLabel,
               onClassChanged: onClassChanged,
+              lockClassSelector: subjectLocked,
             ),
+
+            if (isHomeroomOverview) ...[
+              const SizedBox(height: _cardGap),
+              Text(
+                'Бусад хичээлийн мэдээллийг зөвхөн харах боломжтой.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ),
+              if (taughtHere.isNotEmpty) ...[
+                const SizedBox(height: _cardGap),
+                for (final subject in taughtHere)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: OutlinedButton(
+                      onPressed: () => _enterSubjectWorkspace(
+                        context,
+                        subjectId: subject.id,
+                      ),
+                      child: Text(
+                        '${subject.name} хичээлийн ажлын хэсэгт орох',
+                      ),
+                    ),
+                  ),
+              ],
+            ],
 
             const SizedBox(height: _sectionGap),
 
@@ -252,7 +322,15 @@ class ClassDashboardScreen extends StatelessWidget {
                   icon: Icons.assignment,
                   label: 'Даалгавар',
                   color: const Color(0xFFEF6C00),
-                  onTap: () => _openHomework(context),
+                  onTap: canEditSubject || isHomeroomOverview
+                      ? () => _openHomework(context)
+                      : () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(AppStore.subjectEditDeniedMessage),
+                            ),
+                          );
+                        },
                 ),
                 _QuickActionCard(
                   icon: Icons.lightbulb_outline,
@@ -341,27 +419,92 @@ class ClassDashboardScreen extends StatelessWidget {
               )
             else
               ...todayLessons.map((lesson) {
+                final lessonSubject = store.subjectByName(lesson.subjectName);
                 return Padding(
                   padding: const EdgeInsets.only(bottom: _cardGap),
                   child: TeacherTodayLessonCard(
                     lesson: lesson,
-                    onAttendance: () =>
-                        _openAttendanceTake(context, className: lesson.classId),
+                    onAttendance: () async {
+                      final subject = lessonSubject;
+                      if (subject == null ||
+                          !store.teacherCanEditClassSubject(
+                            classId: lesson.classId,
+                            subjectId: subject.id,
+                          )) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(AppStore.subjectEditDeniedMessage),
+                          ),
+                        );
+                        return;
+                      }
+                      await store.setTeacherWorkspace(
+                        classId: lesson.classId,
+                        subjectId: subject.id,
+                      );
+                      if (!context.mounted) return;
+                      await _openAttendanceTake(
+                        context,
+                        className: lesson.classId,
+                      );
+                    },
                     onJournal: () => _openJournal(
                       context,
                       className: lesson.classId,
                       subjectName: lesson.subjectName,
+                      subjectId: lessonSubject?.id,
+                      periodId: lesson.period.id,
                     ),
-                    onHomework: () => _openHomeworkCreate(
-                      context,
-                      className: lesson.classId,
-                      subjectName: lesson.subjectName,
-                    ),
-                    onGrade: () => _openGradeCreate(
-                      context,
-                      className: lesson.classId,
-                      subjectName: lesson.subjectName,
-                    ),
+                    onHomework: () async {
+                      final subject = lessonSubject;
+                      if (subject == null ||
+                          !store.teacherCanEditClassSubject(
+                            classId: lesson.classId,
+                            subjectId: subject.id,
+                          )) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(AppStore.subjectEditDeniedMessage),
+                          ),
+                        );
+                        return;
+                      }
+                      await store.setTeacherWorkspace(
+                        classId: lesson.classId,
+                        subjectId: subject.id,
+                      );
+                      if (!context.mounted) return;
+                      await _openHomeworkCreate(
+                        context,
+                        className: lesson.classId,
+                        subjectName: lesson.subjectName,
+                      );
+                    },
+                    onGrade: () async {
+                      final subject = lessonSubject;
+                      if (subject == null ||
+                          !store.teacherCanEditClassSubject(
+                            classId: lesson.classId,
+                            subjectId: subject.id,
+                          )) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(AppStore.subjectEditDeniedMessage),
+                          ),
+                        );
+                        return;
+                      }
+                      await store.setTeacherWorkspace(
+                        classId: lesson.classId,
+                        subjectId: subject.id,
+                      );
+                      if (!context.mounted) return;
+                      await _openGradeCreate(
+                        context,
+                        className: lesson.classId,
+                        subjectName: lesson.subjectName,
+                      );
+                    },
                   ),
                 );
               }),
@@ -390,6 +533,7 @@ class _DashboardHeader extends StatelessWidget {
     required this.selectedClass,
     required this.subjectLabel,
     required this.onClassChanged,
+    this.lockClassSelector = false,
   });
 
   final String greeting;
@@ -398,6 +542,7 @@ class _DashboardHeader extends StatelessWidget {
   final String selectedClass;
   final String? subjectLabel;
   final Future<void> Function(String classId) onClassChanged;
+  final bool lockClassSelector;
 
   static const _sideBySideBreakpoint = 380.0;
 
@@ -409,12 +554,18 @@ class _DashboardHeader extends StatelessWidget {
       letterSpacing: -0.3,
       height: 1.2,
     );
-    final selector = _ClassDropdown(
-      assignedClasses: assignedClasses,
-      selectedClass: selectedClass,
-      subjectLabel: subjectLabel,
-      onChanged: onClassChanged,
-    );
+    final subject = subjectLabel?.trim();
+    final fixedLabel = (subject != null && subject.isNotEmpty)
+        ? '$selectedClass анги · $subject'
+        : '$selectedClass анги';
+    final selector = lockClassSelector
+        ? _FixedContextChip(label: fixedLabel)
+        : _ClassDropdown(
+            assignedClasses: assignedClasses,
+            selectedClass: selectedClass,
+            subjectLabel: subjectLabel,
+            onChanged: onClassChanged,
+          );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -447,6 +598,34 @@ class _DashboardHeader extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _FixedContextChip extends StatelessWidget {
+  const _FixedContextChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: AppColors.card,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ClassDashboardScreen._radius),
+        side: const BorderSide(color: AppColors.outlineSubtle),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Text(
+          label,
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
     );
   }
 }

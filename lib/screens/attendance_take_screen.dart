@@ -10,11 +10,15 @@ class AttendanceTakeScreen extends StatefulWidget {
     required this.selectedClass,
     required this.store,
     this.existing,
+    this.lessonDate,
   });
 
   final String selectedClass;
   final AppStore store;
   final AttendanceRecord? existing;
+
+  /// When set (from journal), attendance is stored for this calendar day.
+  final DateTime? lessonDate;
 
   @override
   State<AttendanceTakeScreen> createState() => _AttendanceTakeScreenState();
@@ -65,8 +69,8 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
   String get _dateLabel {
     final existing = widget.existing;
     if (existing != null) return existing.date;
-    final now = DateTime.now();
-    return '${now.year} оны ${now.month} сарын ${now.day}';
+    final day = widget.lessonDate ?? DateTime.now();
+    return '${day.year} оны ${day.month} сарын ${day.day}';
   }
 
   int get _presentCount {
@@ -140,10 +144,18 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
       entries: entries,
     );
 
-    if (existing != null) {
-      await widget.store.updateAttendance(record);
-    } else {
-      await widget.store.addAttendance(widget.selectedClass, record);
+    try {
+      if (existing != null) {
+        await widget.store.updateAttendance(record);
+      } else {
+        await widget.store.addAttendance(widget.selectedClass, record);
+      }
+    } on PermissionDeniedException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+      return;
     }
 
     if (!mounted) return;

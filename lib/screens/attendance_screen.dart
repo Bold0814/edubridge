@@ -75,6 +75,9 @@ class AttendanceScreen extends StatelessWidget {
   }
 
   Widget _menu(BuildContext context, AttendanceRecord record) {
+    if (!store.teacherCanWriteAttendance(selectedClass)) {
+      return const SizedBox.shrink();
+    }
     return PopupMenuButton<String>(
       tooltip: 'Цэс',
       onSelected: (value) => _onMenuSelected(context, record, value),
@@ -100,11 +103,13 @@ class AttendanceScreen extends StatelessWidget {
             title: Text('$selectedClass · Ирц'),
             centerTitle: true,
           ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _openTakeScreen(context),
-            tooltip: 'Ирц авах',
-            child: const Icon(Icons.add),
-          ),
+          floatingActionButton: store.teacherCanWriteAttendance(selectedClass)
+              ? FloatingActionButton(
+                  onPressed: () => _openTakeScreen(context),
+                  tooltip: 'Ирц авах',
+                  child: const Icon(Icons.add),
+                )
+              : null,
           body: isEmpty
               ? Center(
                   child: Padding(
