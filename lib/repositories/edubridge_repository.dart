@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/account_status.dart';
 import '../models/announcement.dart';
+import '../models/announcement_read_receipt.dart';
 import '../models/app_role.dart';
 import '../models/app_settings.dart';
 import '../models/attendance_record.dart';
@@ -14,6 +15,7 @@ import '../models/school.dart';
 import '../models/school_class.dart';
 import '../models/school_settings.dart';
 import '../models/student.dart';
+import '../models/student_homework_status.dart';
 import '../models/subject.dart';
 import '../models/teacher.dart';
 import '../models/teacher_note.dart';
@@ -475,6 +477,257 @@ class EduBridgeRepository {
     await _db.delete('announcements', where: 'id = ?', whereArgs: [id]);
   }
 
+  // --- Student homework status ---
+
+  Future<List<StudentHomeworkStatus>> loadStudentHomeworkStatuses() async {
+    final rows = await _db.query(
+      'student_homework_status',
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map(_studentHomeworkStatusFromRow).toList();
+  }
+
+  Future<List<StudentHomeworkStatus>> loadStudentHomeworkStatusesByHomework(
+    String homeworkId,
+  ) async {
+    final rows = await _db.query(
+      'student_homework_status',
+      where: 'homework_id = ?',
+      whereArgs: [homeworkId],
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map(_studentHomeworkStatusFromRow).toList();
+  }
+
+  Future<List<StudentHomeworkStatus>> loadStudentHomeworkStatusesByStudent({
+    required String studentId,
+    required String schoolId,
+  }) async {
+    final rows = await _db.query(
+      'student_homework_status',
+      where: 'student_id = ? AND school_id = ?',
+      whereArgs: [studentId, schoolId],
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map(_studentHomeworkStatusFromRow).toList();
+  }
+
+  Future<StudentHomeworkStatus?> getStudentHomeworkStatus({
+    required String schoolId,
+    required String homeworkId,
+    required String studentId,
+  }) async {
+    final rows = await _db.query(
+      'student_homework_status',
+      where: 'school_id = ? AND homework_id = ? AND student_id = ?',
+      whereArgs: [schoolId, homeworkId, studentId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _studentHomeworkStatusFromRow(rows.first);
+  }
+
+  Future<void> insertStudentHomeworkStatus(StudentHomeworkStatus status) async {
+    await _db.insert(
+      'student_homework_status',
+      _studentHomeworkStatusToRow(status),
+    );
+  }
+
+  Future<void> updateStudentHomeworkStatus(StudentHomeworkStatus status) async {
+    await _db.update(
+      'student_homework_status',
+      _studentHomeworkStatusToRow(status),
+      where: 'id = ?',
+      whereArgs: [status.id],
+    );
+  }
+
+  /// Upserts by unique (school_id, homework_id, student_id).
+  Future<void> upsertStudentHomeworkStatus(StudentHomeworkStatus status) async {
+    final existing = await getStudentHomeworkStatus(
+      schoolId: status.schoolId,
+      homeworkId: status.homeworkId,
+      studentId: status.studentId,
+    );
+    if (existing == null) {
+      await insertStudentHomeworkStatus(status);
+      return;
+    }
+    await _db.update(
+      'student_homework_status',
+      _studentHomeworkStatusToRow(
+        StudentHomeworkStatus(
+          id: existing.id,
+          schoolId: status.schoolId,
+          classId: status.classId,
+          homeworkId: status.homeworkId,
+          studentId: status.studentId,
+          status: status.status,
+          checkedByTeacherId: status.checkedByTeacherId,
+          checkedAt: status.checkedAt,
+          teacherComment: status.teacherComment,
+          updatedAt: status.updatedAt,
+          isActive: status.isActive,
+        ),
+      ),
+      where: 'id = ?',
+      whereArgs: [existing.id],
+    );
+  }
+
+  Future<void> deleteStudentHomeworkStatus(String id) async {
+    await _db.delete(
+      'student_homework_status',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Map<String, Object?> _studentHomeworkStatusToRow(StudentHomeworkStatus s) => {
+    'id': s.id,
+    'school_id': s.schoolId,
+    'class_id': s.classId,
+    'homework_id': s.homeworkId,
+    'student_id': s.studentId,
+    'status': s.status.storageValue,
+    'checked_by_teacher_id': s.checkedByTeacherId,
+    'checked_at': s.checkedAt?.toIso8601String(),
+    'teacher_comment': s.teacherComment,
+    'updated_at': s.updatedAt.toIso8601String(),
+    'is_active': s.isActive ? 1 : 0,
+  };
+
+  StudentHomeworkStatus _studentHomeworkStatusFromRow(
+    Map<String, Object?> row,
+  ) {
+    return StudentHomeworkStatus(
+      id: row['id']! as String,
+      schoolId: row['school_id']! as String,
+      classId: row['class_id']! as String,
+      homeworkId: row['homework_id']! as String,
+      studentId: row['student_id']! as String,
+      status: StudentHomeworkStatusValue.fromStorage(row['status'] as String?),
+      checkedByTeacherId: row['checked_by_teacher_id'] as String?,
+      checkedAt: DateTime.tryParse(row['checked_at'] as String? ?? ''),
+      teacherComment: row['teacher_comment'] as String?,
+      updatedAt:
+          DateTime.tryParse(row['updated_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      isActive: (row['is_active'] as int?) != 0,
+    );
+  }
+
+  // --- Announcement read receipts ---
+
+  Future<List<AnnouncementReadReceipt>>
+  loadAllAnnouncementReadReceipts() async {
+    final rows = await _db.query(
+      'announcement_read_receipts',
+      orderBy: 'read_at DESC',
+    );
+    return rows.map(_announcementReadReceiptFromRow).toList();
+  }
+
+  Future<void> insertAnnouncementReadReceipt(
+    AnnouncementReadReceipt receipt,
+  ) async {
+    await _db.insert(
+      'announcement_read_receipts',
+      _announcementReadReceiptToRow(receipt),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  Future<void> upsertAnnouncementReadReceipt(
+    AnnouncementReadReceipt receipt,
+  ) async {
+    final existing = await getAnnouncementReadReceipt(
+      schoolId: receipt.schoolId,
+      announcementId: receipt.announcementId,
+      userAccountId: receipt.userAccountId,
+    );
+    if (existing == null) {
+      await _db.insert(
+        'announcement_read_receipts',
+        _announcementReadReceiptToRow(receipt),
+      );
+      return;
+    }
+    await _db.update(
+      'announcement_read_receipts',
+      _announcementReadReceiptToRow(
+        AnnouncementReadReceipt(
+          id: existing.id,
+          schoolId: receipt.schoolId,
+          announcementId: receipt.announcementId,
+          userAccountId: receipt.userAccountId,
+          role: receipt.role,
+          studentId: receipt.studentId,
+          readAt: receipt.readAt,
+        ),
+      ),
+      where: 'id = ?',
+      whereArgs: [existing.id],
+    );
+  }
+
+  Future<List<AnnouncementReadReceipt>> loadAnnouncementReadReceipts({
+    required String announcementId,
+    required String schoolId,
+  }) async {
+    final rows = await _db.query(
+      'announcement_read_receipts',
+      where: 'announcement_id = ? AND school_id = ?',
+      whereArgs: [announcementId, schoolId],
+      orderBy: 'read_at DESC',
+    );
+    return rows.map(_announcementReadReceiptFromRow).toList();
+  }
+
+  Future<AnnouncementReadReceipt?> getAnnouncementReadReceipt({
+    required String schoolId,
+    required String announcementId,
+    required String userAccountId,
+  }) async {
+    final rows = await _db.query(
+      'announcement_read_receipts',
+      where: 'school_id = ? AND announcement_id = ? AND user_account_id = ?',
+      whereArgs: [schoolId, announcementId, userAccountId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _announcementReadReceiptFromRow(rows.first);
+  }
+
+  Map<String, Object?> _announcementReadReceiptToRow(
+    AnnouncementReadReceipt r,
+  ) => {
+    'id': r.id,
+    'school_id': r.schoolId,
+    'announcement_id': r.announcementId,
+    'user_account_id': r.userAccountId,
+    'role': r.role.storageValue,
+    'student_id': r.studentId,
+    'read_at': r.readAt.toIso8601String(),
+  };
+
+  AnnouncementReadReceipt _announcementReadReceiptFromRow(
+    Map<String, Object?> row,
+  ) {
+    return AnnouncementReadReceipt(
+      id: row['id']! as String,
+      schoolId: row['school_id']! as String,
+      announcementId: row['announcement_id']! as String,
+      userAccountId: row['user_account_id']! as String,
+      role: AppRole.tryParse(row['role'] as String?) ?? AppRole.teacher,
+      studentId: row['student_id'] as String?,
+      readAt:
+          DateTime.tryParse(row['read_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+    );
+  }
+
   // --- Teacher notes ---
 
   Future<List<TeacherNote>> loadTeacherNotes() async {
@@ -672,6 +925,37 @@ class EduBridgeRepository {
 
   Future<void> insertTeacher(Teacher teacher) async {
     await _db.insert('teachers', _teacherToRow(teacher));
+  }
+
+  /// Creates a teacher profile and optional login account atomically.
+  Future<void> createTeacherWithOptionalLoginTxn({
+    required Teacher teacher,
+    UserAccount? account,
+    UserSchoolMembership? membership,
+  }) async {
+    await _db.transaction((txn) async {
+      await txn.insert('teachers', _teacherToRow(teacher));
+      if (account != null) {
+        await txn.insert('user_accounts', _userToRow(account));
+      }
+      if (membership != null) {
+        await txn.insert(
+          'user_school_memberships',
+          _membershipToRow(membership),
+        );
+      }
+    });
+  }
+
+  /// Provisions a teacher login for an existing teacher profile atomically.
+  Future<void> provisionTeacherLoginTxn({
+    required UserAccount account,
+    required UserSchoolMembership membership,
+  }) async {
+    await _db.transaction((txn) async {
+      await txn.insert('user_accounts', _userToRow(account));
+      await txn.insert('user_school_memberships', _membershipToRow(membership));
+    });
   }
 
   Future<void> insertTeachers(List<Teacher> teachers) async {
@@ -1454,6 +1738,9 @@ class EduBridgeRepository {
     'is_active': user.isActive ? 1 : 0,
     'account_status': user.status.storageValue,
     'created_at': user.createdAt.toIso8601String(),
+    'failed_pin_attempts': user.failedPinAttempts,
+    'pin_locked_until': user.pinLockedUntil?.toIso8601String(),
+    'require_password_change': user.requirePasswordChange ? 1 : 0,
   };
 
   UserAccount _userFromRow(Map<String, Object?> row) {
@@ -1470,6 +1757,11 @@ class EduBridgeRepository {
       createdAt:
           DateTime.tryParse(row['created_at'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      failedPinAttempts: (row['failed_pin_attempts'] as int?) ?? 0,
+      pinLockedUntil: DateTime.tryParse(
+        row['pin_locked_until'] as String? ?? '',
+      ),
+      requirePasswordChange: (row['require_password_change'] as int?) == 1,
     );
   }
 }

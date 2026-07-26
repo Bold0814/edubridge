@@ -13,6 +13,7 @@ import '../guardian/guardian_attendance_screen.dart';
 import '../guardian/guardian_grades_screen.dart';
 import '../guardian/guardian_homework_screen.dart';
 import '../teacher_notes_screen.dart';
+import '../timetable_viewer_screen.dart';
 
 /// Student home — read-only timeline over shared AppStore data.
 class StudentHomeScreen extends StatelessWidget {
@@ -78,6 +79,26 @@ class StudentHomeScreen extends StatelessWidget {
                       lessons: TimetableService.todayLessonsForClass(
                         store,
                         student.className,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.item),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.calendar_month_outlined),
+                        title: const Text('Хичээлийн хуваарь'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => TimetableViewerScreen(
+                                store: store,
+                                title: 'Хичээлийн хуваарь',
+                                mode: TimetableViewerMode.student,
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
                     const SizedBox(height: AppSpacing.sectionSm),

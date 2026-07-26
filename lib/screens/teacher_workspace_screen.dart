@@ -7,6 +7,7 @@ import '../widgets/edubridge_logo.dart';
 import '../widgets/session_menu_button.dart';
 import 'home_screen.dart';
 import 'settings_screen.dart';
+import 'timetable_viewer_screen.dart';
 
 /// Teacher entry after school is chosen — pick homeroom or teaching context.
 class TeacherWorkspaceScreen extends StatelessWidget {
@@ -93,6 +94,26 @@ class TeacherWorkspaceScreen extends StatelessWidget {
                 'Багшийн ажлын хэсэг',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: AppColors.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sectionSm),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.calendar_month_outlined),
+                  title: const Text('Миний хуваарь'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => TimetableViewerScreen(
+                          store: store,
+                          title: 'Миний хуваарь',
+                          mode: TimetableViewerMode.teacher,
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: AppSpacing.sectionSm),

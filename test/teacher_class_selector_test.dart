@@ -44,7 +44,7 @@ void main() {
     );
   }
 
-  Future<String> loginAsTeacher(String username) async {
+  Future<String> createTeacherAccount(String username) async {
     final teacher = Teacher(
       id: store.nextTeacherId(),
       schoolId: 'sch-sel',
@@ -62,18 +62,21 @@ void main() {
       ),
       plainPassword: 'test123',
     );
+    return teacher.id;
+  }
+
+  Future<void> switchToTeacher(String username) async {
     final account = store.userByUsername(username)!;
     final membership = store
         .activeMembershipsForUser(account.id)
         .firstWhere((m) => m.role == AppRole.teacher);
     await store.selectDevelopmentUser(account, rememberMe: false);
     await store.selectSchoolMembership(membership);
-    return teacher.id;
   }
 
   test('homeroom and subject classes appear; unrelated excluded', () async {
     await seedSchool();
-    final teacherId = await loginAsTeacher('t1');
+    final teacherId = await createTeacherAccount('t1');
     await store.addSchoolClass(name: 'T1А', homeroomTeacherId: teacherId);
     await store.addSchoolClass(name: 'T2А');
     await store.addSchoolClass(name: 'T3А');
@@ -88,6 +91,7 @@ void main() {
       homeroomTeacherId: null,
       subjectTeacherIds: {math.id: teacherId, physics.id: teacherId},
     );
+    await switchToTeacher('t1');
 
     final assigned = store.assignedClassesForActiveTeacher();
     expect(assigned.map((c) => c.className), ['T1А', 'T2А']);
@@ -104,7 +108,7 @@ void main() {
 
   test('duplicate homeroom+subject appears once with combined label', () async {
     await seedSchool();
-    final teacherId = await loginAsTeacher('t2');
+    final teacherId = await createTeacherAccount('t2');
     await store.addSchoolClass(name: 'D1А', homeroomTeacherId: teacherId);
     await store.addSubject('SelМонгол');
     await store.addSubject('SelУран');
@@ -117,6 +121,7 @@ void main() {
       homeroomTeacherId: teacherId,
       subjectTeacherIds: {s1.id: teacherId, s2.id: teacherId, s3.id: teacherId},
     );
+    await switchToTeacher('t2');
 
     final assigned = store.assignedClassesForActiveTeacher();
     expect(assigned, hasLength(1));
@@ -130,7 +135,7 @@ void main() {
 
   test('another school class is excluded', () async {
     await seedSchool();
-    final teacherId = await loginAsTeacher('t3');
+    final teacherId = await createTeacherAccount('t3');
     await store.addSchoolClass(name: 'Local1А', homeroomTeacherId: teacherId);
     await store.createSchool(
       id: 'sch-other',
@@ -163,7 +168,7 @@ void main() {
 
   test('selecting class with one subject auto-selects it', () async {
     await seedSchool();
-    final teacherId = await loginAsTeacher('t4');
+    final teacherId = await createTeacherAccount('t4');
     await store.addSchoolClass(name: 'S1А');
     await store.addSubject('AutoМат');
     final math = store.activeSubjects.firstWhere((s) => s.name == 'AutoМат');
@@ -172,6 +177,7 @@ void main() {
       homeroomTeacherId: null,
       subjectTeacherIds: {math.id: teacherId},
     );
+    await switchToTeacher('t4');
 
     final ok = await store.selectTeacherDashboardClass('S1А');
     expect(ok, isTrue);
@@ -181,7 +187,7 @@ void main() {
 
   test('stale subject cleared when switching to homeroom-only class', () async {
     await seedSchool();
-    final teacherId = await loginAsTeacher('t5');
+    final teacherId = await createTeacherAccount('t5');
     await store.addSchoolClass(name: 'H1А', homeroomTeacherId: teacherId);
     await store.addSchoolClass(name: 'S2А');
     await store.addSubject('StaleМат');
@@ -191,6 +197,7 @@ void main() {
       homeroomTeacherId: null,
       subjectTeacherIds: {math.id: teacherId},
     );
+    await switchToTeacher('t5');
 
     await store.setTeacherWorkspace(classId: 'S2А', subjectId: math.id);
     expect(store.activeContext.subjectId, math.id);
@@ -205,7 +212,7 @@ void main() {
     'multi-subject keeps valid preferred and rejects foreign subject',
     () async {
       await seedSchool();
-      final teacherId = await loginAsTeacher('t6');
+      final teacherId = await createTeacherAccount('t6');
       await store.addSchoolClass(name: 'M1А');
       await store.addSubject('MМат');
       await store.addSubject('MФизик');
@@ -218,6 +225,7 @@ void main() {
         homeroomTeacherId: null,
         subjectTeacherIds: {math.id: teacherId, physics.id: teacherId},
       );
+      await switchToTeacher('t6');
 
       await store.setTeacherWorkspace(classId: 'M1А', subjectId: math.id);
       final kept = await store.selectTeacherDashboardClass(
@@ -238,17 +246,19 @@ void main() {
 
   test('teacher with no assignments sees empty list', () async {
     await seedSchool();
-    await loginAsTeacher('t7');
+    await createTeacherAccount('t7');
     await store.addSchoolClass(name: 'X1А');
+    await switchToTeacher('t7');
     expect(store.assignedClassesForActiveTeacher(), isEmpty);
     expect(store.teacherCanAccessClass('X1А'), isFalse);
   });
 
   test('direct access to unrelated class is denied', () async {
     await seedSchool();
-    final teacherId = await loginAsTeacher('t8');
+    final teacherId = await createTeacherAccount('t8');
     await store.addSchoolClass(name: 'Ok1А', homeroomTeacherId: teacherId);
     await store.addSchoolClass(name: 'No1А');
+    await switchToTeacher('t8');
     expect(await store.selectTeacherDashboardClass('No1А'), isFalse);
   });
 
@@ -256,8 +266,9 @@ void main() {
     tester,
   ) async {
     await seedSchool();
-    await loginAsTeacher('t9');
+    await createTeacherAccount('t9');
     await store.addSchoolClass(name: 'E1А');
+    await switchToTeacher('t9');
     await store.setTeacherWorkspace(classId: 'E1А', subjectId: null);
 
     await tester.pumpWidget(
@@ -273,9 +284,10 @@ void main() {
 
   testWidgets('unrelated class shows access denied', (tester) async {
     await seedSchool();
-    final teacherId = await loginAsTeacher('t10');
+    final teacherId = await createTeacherAccount('t10');
     await store.addSchoolClass(name: 'Ok2А', homeroomTeacherId: teacherId);
     await store.addSchoolClass(name: 'Bad2А');
+    await switchToTeacher('t10');
     await store.setTeacherWorkspace(classId: 'Bad2А', subjectId: null);
 
     await tester.pumpWidget(

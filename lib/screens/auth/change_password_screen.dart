@@ -1,44 +1,42 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-import '../../services/pin_rules.dart';
+import '../../navigation/app_navigation.dart';
+import '../../services/password_rules.dart';
 import '../../state/app_store.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/edubridge_logo.dart';
-import 'login_screen.dart';
 
-/// Self-service PIN creation after successful first-time identity checks.
-class CreatePinScreen extends StatefulWidget {
-  const CreatePinScreen({super.key, required this.store, required this.userId});
+/// Forced password change after temporary teacher password login.
+class ChangePasswordScreen extends StatefulWidget {
+  const ChangePasswordScreen({super.key, required this.store});
 
   final AppStore store;
-  final String userId;
 
   @override
-  State<CreatePinScreen> createState() => _CreatePinScreenState();
+  State<ChangePasswordScreen> createState() => _ChangePasswordScreenState();
 }
 
-class _CreatePinScreenState extends State<CreatePinScreen> {
-  final _pinController = TextEditingController();
+class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
+  final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
   bool _submitting = false;
   String? _error;
 
   @override
   void dispose() {
-    _pinController.dispose();
+    _passwordController.dispose();
     _confirmController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (_submitting) return;
-    final error = PinRules.validateNewPin(
-      _pinController.text,
+    final validation = PasswordRules.validateNewPassword(
+      _passwordController.text,
       _confirmController.text,
     );
-    if (error != null) {
-      setState(() => _error = error);
+    if (validation != null) {
+      setState(() => _error = validation);
       return;
     }
 
@@ -48,27 +46,30 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
     });
 
     try {
-      await widget.store.activateAccountWithPin(
-        userId: widget.userId,
-        pin: _pinController.text,
+      await widget.store.completeRequiredPasswordChange(
+        newPassword: _passwordController.text,
+        confirmPassword: _confirmController.text,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Нэвтрэх эрх амжилттай идэвхжлээ.')),
-      );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (context) => LoginScreen(store: widget.store),
-        ),
-        (route) => false,
+      await AppNavigation.continueFromSchoolResolution(
+        context,
+        widget.store,
+        preferLastSchool: false,
       );
     } on ArgumentError catch (e) {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _error = e.message == 'ALREADY_ACTIVE'
-            ? 'Энэ бүртгэл идэвхжсэн байна. Нэвтрэх хэсгээр орно уу.'
-            : 'Мэдээлэл тохирохгүй байна.';
+        _error = switch (e.message) {
+          'PASSWORD_MISMATCH' => PasswordRules.mismatchMessage,
+          'INVALID_PASSWORD' =>
+            PasswordRules.validateNewPassword(
+                  _passwordController.text,
+                  _confirmController.text,
+                ) ??
+                PasswordRules.combinedRequirementsMessage,
+          _ => 'Нууц үг солиход алдаа гарлаа.',
+        };
       });
     }
   }
@@ -78,7 +79,7 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('PIN үүсгэх')),
+      appBar: AppBar(title: const Text('Шинэ нууц үг үүсгэх')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.page),
@@ -86,22 +87,25 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
             const Center(child: EduBridgeLogo(size: 72)),
             const SizedBox(height: AppSpacing.sectionSm),
             Text(
-              'Шинэ PIN тохируулах',
+              'Шинэ нууц үг үүсгэх',
               textAlign: TextAlign.center,
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
             ),
+            const SizedBox(height: AppSpacing.itemSm),
+            Text(
+              'Түр нууц үгээ солино уу.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium,
+            ),
             const SizedBox(height: AppSpacing.section),
             TextField(
-              controller: _pinController,
+              controller: _passwordController,
               obscureText: true,
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               decoration: const InputDecoration(
-                labelText: 'Шинэ PIN (4 орон)',
-                counterText: '',
+                labelText: 'Шинэ нууц үг',
+                helperText: PasswordRules.helperText,
               ),
               onChanged: (_) {
                 if (_error != null) setState(() => _error = null);
@@ -111,13 +115,7 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
             TextField(
               controller: _confirmController,
               obscureText: true,
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: 'PIN давтах',
-                counterText: '',
-              ),
+              decoration: const InputDecoration(labelText: 'Нууц үг давтах'),
               onSubmitted: (_) => _submit(),
               onChanged: (_) {
                 if (_error != null) setState(() => _error = null);
@@ -145,7 +143,7 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
                       height: 22,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('Идэвхжүүлэх'),
+                  : const Text('Хадгалах'),
             ),
           ],
         ),

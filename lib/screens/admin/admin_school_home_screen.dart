@@ -7,6 +7,8 @@ import '../../widgets/admin_permission_gate.dart';
 import '../../widgets/edubridge_logo.dart';
 import '../../widgets/session_menu_button.dart';
 import '../class_list_screen.dart';
+import '../class_teacher_assignment_screen.dart';
+import '../class_timetable_settings_screen.dart';
 import '../onboarding/school_setup_screen.dart';
 import '../settings_screen.dart';
 import '../subjects_settings_screen.dart';
@@ -85,6 +87,20 @@ class AdminSchoolHomeScreen extends StatelessWidget {
                   title: 'Сурагчид',
                   onTap: () =>
                       _open(context, SchoolStudentsHubScreen(store: store)),
+                ),
+                _ActionTile(
+                  title: 'Хичээлийн хуваарь',
+                  onTap: () => _open(
+                    context,
+                    ClassTimetableSettingsScreen(store: store),
+                  ),
+                ),
+                _ActionTile(
+                  title: 'Анги ба багш',
+                  onTap: () => _open(
+                    context,
+                    ClassTeacherAssignmentScreen(store: store),
+                  ),
                 ),
                 _ActionTile(
                   title: 'Тохиргоо',

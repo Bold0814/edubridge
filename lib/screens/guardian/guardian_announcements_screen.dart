@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../../models/announcement.dart';
 import '../../models/student.dart';
 import '../../state/app_store.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/learner_access_gate.dart';
+import '../announcement_detail_screen.dart';
 
-/// Class announcements for the child's class (mark as read).
+/// Class announcements for the child's class.
 class GuardianAnnouncementsScreen extends StatelessWidget {
   const GuardianAnnouncementsScreen({
     super.key,
@@ -16,6 +18,22 @@ class GuardianAnnouncementsScreen extends StatelessWidget {
 
   final AppStore store;
   final Student student;
+
+  Future<void> _openDetail(
+    BuildContext context,
+    Announcement announcement,
+  ) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AnnouncementDetailScreen(
+          store: store,
+          announcement: announcement,
+          showReceiptStats: false,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,73 +59,69 @@ class GuardianAnnouncementsScreen extends StatelessWidget {
                       final item = items[index];
                       final read = store.isGuardianAnnouncementRead(item.id);
                       return Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(AppSpacing.card),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      item.title,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium
-                                          ?.copyWith(
-                                            fontWeight: read
-                                                ? FontWeight.w500
-                                                : FontWeight.w700,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radius,
+                          ),
+                          onTap: () => _openDetail(context, item),
+                          child: Padding(
+                            padding: const EdgeInsets.all(AppSpacing.card),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        item.title,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              fontWeight: read
+                                                  ? FontWeight.w500
+                                                  : FontWeight.w700,
+                                            ),
+                                      ),
+                                    ),
+                                    if (!read)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primary.withValues(
+                                            alpha: 0.12,
                                           ),
-                                    ),
-                                  ),
-                                  if (!read)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primary.withValues(
-                                          alpha: 0.12,
+                                          borderRadius: BorderRadius.circular(
+                                            AppSpacing.radiusSm,
+                                          ),
                                         ),
-                                        borderRadius: BorderRadius.circular(
-                                          AppSpacing.radiusSm,
+                                        child: const Text(
+                                          'Шинэ',
+                                          style: TextStyle(
+                                            color: AppColors.primary,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 12,
+                                          ),
                                         ),
                                       ),
-                                      child: const Text(
-                                        'Шинэ',
-                                        style: TextStyle(
-                                          color: AppColors.primary,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                item.date,
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                              const SizedBox(height: AppSpacing.item),
-                              Text(item.body),
-                              if (!read) ...[
-                                const SizedBox(height: AppSpacing.gap),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: TextButton(
-                                    onPressed: () {
-                                      store.markGuardianAnnouncementRead(
-                                        item.id,
-                                      );
-                                    },
-                                    child: const Text('Уншсан болгох'),
-                                  ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  item.date,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                                const SizedBox(height: AppSpacing.item),
+                                Text(
+                                  item.body,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ],
-                            ],
+                            ),
                           ),
                         ),
                       );

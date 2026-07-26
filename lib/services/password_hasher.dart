@@ -13,6 +13,9 @@ class PasswordHasher {
 
   static final _random = Random.secure();
 
+  /// Current storage layout: `saltHex:hashHex`.
+  static const currentFormatVersion = 1;
+
   /// Returns `saltHex:hashHex`.
   static String hashPassword(String plainPassword) {
     final saltBytes = List<int>.generate(16, (_) => _random.nextInt(256));
@@ -21,14 +24,41 @@ class PasswordHasher {
     return '$saltHex:$hashHex';
   }
 
+  /// Verifies [plainPassword] against [stored] without applying strength rules.
+  ///
+  /// Supports:
+  /// - current `saltHex:hashHex` (32-char salt + sha256 hex)
+  /// - legacy unsalted sha256 hex (64 chars, no colon)
   static bool verifyPassword(String plainPassword, String stored) {
-    final parts = stored.split(':');
-    if (parts.length != 2) return false;
-    final saltBytes = _fromHex(parts[0]);
-    if (saltBytes == null) return false;
-    final expected = parts[1];
-    final actual = _hash(saltBytes, plainPassword);
-    return _constantTimeEquals(actual, expected);
+    final value = stored.trim();
+    if (value.isEmpty) return false;
+
+    if (value.contains(':')) {
+      final parts = value.split(':');
+      if (parts.length != 2) return false;
+      final saltBytes = _fromHex(parts[0]);
+      if (saltBytes == null) return false;
+      final expected = parts[1];
+      final actual = _hash(saltBytes, plainPassword);
+      return _constantTimeEquals(actual, expected);
+    }
+
+    // Legacy: unsalted SHA-256 hex digest of the UTF-8 password.
+    if (value.length == 64 && RegExp(r'^[0-9a-fA-F]+$').hasMatch(value)) {
+      final actual = sha256.convert(utf8.encode(plainPassword)).toString();
+      return _constantTimeEquals(actual.toLowerCase(), value.toLowerCase());
+    }
+
+    return false;
+  }
+
+  /// True when [stored] should be upgraded to [hashPassword] after a successful
+  /// login (legacy unsalted SHA-256).
+  static bool needsRehash(String stored) {
+    final value = stored.trim();
+    if (value.isEmpty) return false;
+    if (value.contains(':')) return false;
+    return value.length == 64 && RegExp(r'^[0-9a-fA-F]+$').hasMatch(value);
   }
 
   static String _hash(List<int> saltBytes, String password) {

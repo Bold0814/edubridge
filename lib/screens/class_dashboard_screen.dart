@@ -16,6 +16,7 @@ import 'homework_create_screen.dart';
 import 'homework_screen.dart';
 import 'student_list_screen.dart';
 import 'teacher_notes_screen.dart';
+import 'timetable_viewer_screen.dart';
 
 /// Minimal teacher dashboard (Apple Education / Notion / Classroom inspired).
 class ClassDashboardScreen extends StatelessWidget {
@@ -300,7 +301,31 @@ class ClassDashboardScreen extends StatelessWidget {
             ),
 
             const SizedBox(height: _sectionGap),
-            Text('Өнөөдрийн хичээл', style: theme.textTheme.titleMedium),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Өнөөдрийн хичээл',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => TimetableViewerScreen(
+                          store: store,
+                          title: 'Миний хуваарь',
+                          mode: TimetableViewerMode.teacher,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Миний хуваарь'),
+                ),
+              ],
+            ),
             const SizedBox(height: _cardGap),
             if (todayLessons.isEmpty)
               Card(

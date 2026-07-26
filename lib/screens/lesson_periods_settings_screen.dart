@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/timetable.dart';
 import '../state/app_store.dart';
 import '../theme/app_spacing.dart';
+import '../widgets/admin_permission_gate.dart';
 import '../widgets/confirm_delete.dart';
 
 /// Settings: CRUD for school-wide lesson periods (Хичээлийн цаг).
@@ -51,48 +52,51 @@ class LessonPeriodsSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Хичээлийн цаг')),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _openForm(context),
-        child: const Icon(Icons.add),
-      ),
-      body: ListenableBuilder(
-        listenable: store,
-        builder: (context, _) {
-          final periods = store.lessonPeriods;
-          if (periods.isEmpty) {
-            return const Center(child: Text('Хичээлийн цаг бүртгэгдээгүй'));
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(AppSpacing.page),
-            itemCount: periods.length,
-            separatorBuilder: (context, index) =>
-                const SizedBox(height: AppSpacing.item),
-            itemBuilder: (context, index) {
-              final period = periods[index];
-              return Card(
-                child: ListTile(
-                  title: Text('${period.periodNumber}-р цаг'),
-                  subtitle: Text(period.timeLabel),
-                  trailing: PopupMenuButton<String>(
-                    onSelected: (value) async {
-                      if (value == 'edit') {
-                        await _openForm(context, existing: period);
-                      } else if (value == 'delete') {
-                        await _delete(context, period);
-                      }
-                    },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(value: 'edit', child: Text('Засах')),
-                      PopupMenuItem(value: 'delete', child: Text('Устгах')),
-                    ],
+    return AdminPermissionGate(
+      store: store,
+      child: Scaffold(
+        appBar: AppBar(title: const Text('Хичээлийн цаг')),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () => _openForm(context),
+          child: const Icon(Icons.add),
+        ),
+        body: ListenableBuilder(
+          listenable: store,
+          builder: (context, _) {
+            final periods = store.lessonPeriods;
+            if (periods.isEmpty) {
+              return const Center(child: Text('Хичээлийн цаг бүртгэгдээгүй'));
+            }
+            return ListView.separated(
+              padding: const EdgeInsets.all(AppSpacing.page),
+              itemCount: periods.length,
+              separatorBuilder: (context, index) =>
+                  const SizedBox(height: AppSpacing.item),
+              itemBuilder: (context, index) {
+                final period = periods[index];
+                return Card(
+                  child: ListTile(
+                    title: Text('${period.periodNumber}-р цаг'),
+                    subtitle: Text(period.timeLabel),
+                    trailing: PopupMenuButton<String>(
+                      onSelected: (value) async {
+                        if (value == 'edit') {
+                          await _openForm(context, existing: period);
+                        } else if (value == 'delete') {
+                          await _delete(context, period);
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(value: 'edit', child: Text('Засах')),
+                        PopupMenuItem(value: 'delete', child: Text('Устгах')),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
-          );
-        },
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }

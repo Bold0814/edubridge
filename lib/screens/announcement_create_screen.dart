@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/announcement.dart';
 import '../state/app_store.dart';
+import '../theme/app_spacing.dart';
 
 class AnnouncementCreateScreen extends StatefulWidget {
   const AnnouncementCreateScreen({
@@ -15,6 +16,8 @@ class AnnouncementCreateScreen extends StatefulWidget {
   final AppStore store;
   final Announcement? existing;
 
+  bool get isEditing => existing != null;
+
   @override
   State<AnnouncementCreateScreen> createState() =>
       _AnnouncementCreateScreenState();
@@ -22,18 +25,40 @@ class AnnouncementCreateScreen extends StatefulWidget {
 
 class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
-  final _bodyController = TextEditingController();
-  final _dateController = TextEditingController();
+  late final TextEditingController _titleController;
+  late final TextEditingController _bodyController;
+  late final TextEditingController _dateController;
 
   bool _isFeatured = false;
   late DateTime _selectedDate;
+  bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _selectedDate = DateTime.now();
-    _dateController.text = _formatMongolianDate(_selectedDate);
+    final existing = widget.existing;
+    _titleController = TextEditingController(text: existing?.title ?? '');
+    _bodyController = TextEditingController(text: existing?.body ?? '');
+    _isFeatured = existing?.isFeatured ?? false;
+    _selectedDate = _parseExistingDate(existing?.date) ?? DateTime.now();
+    _dateController = TextEditingController(
+      text: existing?.date.trim().isNotEmpty == true
+          ? existing!.date
+          : _formatMongolianDate(_selectedDate),
+    );
+  }
+
+  DateTime? _parseExistingDate(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final match = RegExp(
+      r'(\d{4})\s*оны\s*(\d{1,2})\s*сарын\s*(\d{1,2})',
+    ).firstMatch(raw);
+    if (match == null) return null;
+    final year = int.tryParse(match.group(1)!);
+    final month = int.tryParse(match.group(2)!);
+    final day = int.tryParse(match.group(3)!);
+    if (year == null || month == null || day == null) return null;
+    return DateTime(year, month, day);
   }
 
   @override
@@ -65,39 +90,49 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
     });
   }
 
-  void _save() {
+  Future<void> _save() async {
+    if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
 
-    final announcement = Announcement(
-      id: widget.existing?.id ?? widget.store.nextAnnouncementId(),
-      schoolId: widget.store.activeSchoolId ?? AppStore.defaultSchoolId,
-      className: widget.className,
-      title: _titleController.text.trim(),
-      body: _bodyController.text.trim(),
-      date: _dateController.text.trim(),
-      isFeatured: _isFeatured,
-    );
+    setState(() => _saving = true);
+    try {
+      final announcement = Announcement(
+        id: widget.existing?.id ?? widget.store.nextAnnouncementId(),
+        schoolId: widget.store.activeSchoolId ?? AppStore.defaultSchoolId,
+        className: widget.className,
+        title: _titleController.text.trim(),
+        body: _bodyController.text.trim(),
+        date: _dateController.text.trim(),
+        isFeatured: _isFeatured,
+      );
 
-    if (widget.existing != null) {
-      widget.store.updateAnnouncement(announcement);
-    } else {
-      widget.store.addAnnouncement(announcement);
+      if (widget.isEditing) {
+        await widget.store.updateAnnouncement(announcement);
+      } else {
+        await widget.store.addAnnouncement(announcement);
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Зарлал амжилттай хадгалагдлаа.')),
+      );
+      Navigator.pop(context, true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Зарлал амжилттай хадгалагдлаа.')),
-    );
-    Navigator.pop(context, announcement);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Шинэ зарлал'), centerTitle: true),
+      appBar: AppBar(
+        title: Text(widget.isEditing ? 'Зарлал засах' : 'Шинэ зарлал'),
+        centerTitle: true,
+      ),
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.page),
           children: [
             Text(
               '${widget.className} анги',
@@ -105,7 +140,7 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.gap),
             TextFormField(
               controller: _titleController,
               textInputAction: TextInputAction.next,
@@ -120,7 +155,7 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
                 return null;
               },
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.gap),
             TextFormField(
               controller: _bodyController,
               minLines: 4,
@@ -137,26 +172,28 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
                 return null;
               },
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.itemSm),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Онцлох зарлал'),
               value: _isFeatured,
-              onChanged: (value) {
-                setState(() => _isFeatured = value);
-              },
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _isFeatured = value);
+                    },
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.itemSm),
             TextFormField(
               controller: _dateController,
               readOnly: true,
-              onTap: _pickDate,
+              onTap: _saving ? null : _pickDate,
               decoration: InputDecoration(
                 labelText: 'Огноо',
                 border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.calendar_today),
-                  onPressed: _pickDate,
+                  onPressed: _saving ? null : _pickDate,
                 ),
               ),
               validator: (value) {
@@ -166,13 +203,19 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
                 return null;
               },
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.section),
             FilledButton(
-              onPressed: _save,
+              onPressed: _saving ? null : _save,
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(48),
               ),
-              child: const Text('Зарлал хадгалах'),
+              child: _saving
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Зарлал хадгалах'),
             ),
           ],
         ),

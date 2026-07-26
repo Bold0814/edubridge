@@ -579,7 +579,7 @@ void main() {
         firstName: 'А',
         phone: '96661111',
       );
-      await activateGuardian('96661111', first.studentCode!, '5555');
+      await activateGuardian('96661111', first.studentCode!, '2580');
       final hash = store
           .findGuardianAccountByNormalizedPhone('96661111')!
           .passwordHash;
@@ -588,7 +588,7 @@ void main() {
         store.findGuardianAccountByNormalizedPhone('96661111')!.passwordHash,
         hash,
       );
-      expect(PasswordHasher.verifyPassword('5555', hash), isTrue);
+      expect(PasswordHasher.verifyPassword('2580', hash), isTrue);
     });
   });
 }

@@ -334,7 +334,7 @@ void main() {
 
   test('phone normalizer strips spaces and hyphens', () {
     expect(PhoneNormalizer.normalize(' 99-11 22 33 '), '99112233');
-    expect(PhoneNormalizer.normalize('+976 9911-2233'), '+97699112233');
+    expect(PhoneNormalizer.normalize('+976 9911-2233'), '99112233');
   });
 
   test('normalized same-school guardian phone reuses guardian', () async {

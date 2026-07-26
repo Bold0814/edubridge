@@ -1,22 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../models/school_settings.dart';
+import '../navigation/app_navigation.dart';
 import '../state/app_store.dart';
 import '../theme/app_spacing.dart';
 import '../widgets/admin_permission_gate.dart';
 import '../widgets/edubridge_logo.dart';
-import 'class_teacher_assignment_screen.dart';
-import 'class_timetable_settings_screen.dart';
 import 'guardian_list_screen.dart';
 import 'lesson_periods_settings_screen.dart';
-import 'role_selection_screen.dart';
-import 'subjects_settings_screen.dart';
-import 'teacher_list_screen.dart';
 import 'user_account_management_screen.dart';
 
 const _appVersion = '1.0.0';
 
-/// Сургуулийн бүтэц, багш, хичээлийн тохиргоо.
+/// Сургуулийн мэдээлэл болон аппын тохиргоо (давхардсан удирдлагагүй).
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.store});
 
@@ -161,19 +157,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Text(_saving ? 'Хадгалж байна…' : 'Хадгалах'),
             ),
 
-            const SizedBox(height: AppSpacing.section),
-            Text('Багш нар', style: theme.textTheme.titleMedium),
-            const SizedBox(height: AppSpacing.gap),
+            const SizedBox(height: AppSpacing.sectionSm),
             Card(
               child: ListTile(
-                title: const Text('Багш удирдах'),
+                title: const Text('Хичээлийн цаг'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) =>
-                          TeacherListScreen(store: widget.store),
+                          LessonPeriodsSettingsScreen(store: widget.store),
                     ),
                   );
                 },
@@ -181,86 +175,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
 
             const SizedBox(height: AppSpacing.sectionSm),
-            Text('Хичээлүүд', style: theme.textTheme.titleMedium),
-            const SizedBox(height: AppSpacing.gap),
             Card(
               child: ListTile(
-                title: const Text('Хичээл удирдах'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) =>
-                          SubjectsSettingsScreen(store: widget.store),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-            const SizedBox(height: AppSpacing.sectionSm),
-            Text('Хуваарь', style: theme.textTheme.titleMedium),
-            const SizedBox(height: AppSpacing.gap),
-            Card(
-              child: Column(
-                children: [
-                  ListTile(
-                    title: const Text('Хичээлийн цаг'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              LessonPeriodsSettingsScreen(store: widget.store),
-                        ),
-                      );
-                    },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    title: const Text('Хичээлийн хуваарь'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              ClassTimetableSettingsScreen(store: widget.store),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: AppSpacing.sectionSm),
-            Text('Асран хамгаалагчид', style: theme.textTheme.titleMedium),
-            const SizedBox(height: AppSpacing.gap),
-            Card(
-              child: ListTile(
-                title: const Text('Асран хамгаалагч удирдах'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) =>
-                          GuardianListScreen(store: widget.store),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-            const SizedBox(height: AppSpacing.sectionSm),
-            Text('Хэрэглэгчийн эрх', style: theme.textTheme.titleMedium),
-            const SizedBox(height: AppSpacing.gap),
-            Card(
-              child: ListTile(
-                title: const Text('Хэрэглэгчийн бүртгэл'),
+                title: const Text('Хэрэглэгчийн эрх'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () {
                   Navigator.push(
@@ -275,40 +192,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
 
             const SizedBox(height: AppSpacing.sectionSm),
-            Text(
-              'Анги ба багшийн тохиргоо',
-              style: theme.textTheme.titleMedium,
-            ),
-            const SizedBox(height: AppSpacing.gap),
             Card(
               child: ListTile(
-                title: const Text('Анги, хичээл, багш оноох'),
+                title: const Text('Асран хамгаалагчийн холбоос засах'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) =>
-                          ClassTeacherAssignmentScreen(store: widget.store),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-            const SizedBox(height: AppSpacing.sectionSm),
-            Text('Хөгжүүлэлт', style: theme.textTheme.titleMedium),
-            const SizedBox(height: AppSpacing.gap),
-            Card(
-              child: ListTile(
-                title: const Text('Туршилтын хэрэглэгч солих'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) =>
-                          RoleSelectionScreen(store: widget.store),
+                          GuardianListScreen(store: widget.store),
                     ),
                   );
                 },
@@ -346,6 +239,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
               ),
+            ),
+
+            const SizedBox(height: AppSpacing.sectionSm),
+            OutlinedButton(
+              onPressed: () =>
+                  AppNavigation.logoutToLogin(context, widget.store),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(AppSpacing.buttonHeight),
+              ),
+              child: const Text('Гарах'),
             ),
           ],
         ),

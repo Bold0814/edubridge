@@ -6,8 +6,9 @@ import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../widgets/confirm_delete.dart';
 import 'announcement_create_screen.dart';
+import 'announcement_detail_screen.dart';
 
-class AnnouncementScreen extends StatefulWidget {
+class AnnouncementScreen extends StatelessWidget {
   const AnnouncementScreen({
     super.key,
     required this.selectedClass,
@@ -17,51 +18,61 @@ class AnnouncementScreen extends StatefulWidget {
   final String selectedClass;
   final AppStore store;
 
-  @override
-  State<AnnouncementScreen> createState() => _AnnouncementScreenState();
-}
-
-class _AnnouncementScreenState extends State<AnnouncementScreen> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.store.markAnnouncementsViewed(widget.selectedClass);
-    });
-  }
-
-  Future<void> _openCreateScreen({Announcement? existing}) async {
-    await Navigator.push<Announcement>(
+  Future<void> _openCreateScreen(
+    BuildContext context, {
+    Announcement? existing,
+  }) async {
+    final saved = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => AnnouncementCreateScreen(
-          className: widget.selectedClass,
-          store: widget.store,
+          className: selectedClass,
+          store: store,
           existing: existing,
         ),
       ),
     );
-    if (!mounted) return;
+    if (!context.mounted) return;
+    if (saved == true) {
+      // Store already notified; ListenableBuilder refreshes.
+    }
   }
 
-  Future<void> _onMenuSelected(Announcement item, String action) async {
+  Future<void> _openDetail(BuildContext context, Announcement item) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AnnouncementDetailScreen(
+          store: store,
+          announcement: item,
+          showReceiptStats: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onMenuSelected(
+    BuildContext context,
+    Announcement item,
+    String action,
+  ) async {
     if (action == 'edit') {
-      await _openCreateScreen(existing: item);
+      await _openCreateScreen(context, existing: item);
       return;
     }
     if (action == 'delete') {
       final ok = await confirmDelete(context);
       if (!ok) return;
-      await widget.store.deleteAnnouncement(item.id);
-      if (!mounted) return;
+      await store.deleteAnnouncement(item.id);
+      if (!context.mounted) return;
       showDeletedSnackBar(context);
     }
   }
 
-  Future<void> _onLongPress(Announcement item) async {
+  Future<void> _onLongPress(BuildContext context, Announcement item) async {
     final action = await showEditDeleteMenu(context);
-    if (action == null || !mounted) return;
-    await _onMenuSelected(item, action);
+    if (action == null || !context.mounted) return;
+    await _onMenuSelected(context, item, action);
   }
 
   @override
@@ -69,20 +80,18 @@ class _AnnouncementScreenState extends State<AnnouncementScreen> {
     final theme = Theme.of(context);
 
     return ListenableBuilder(
-      listenable: widget.store,
+      listenable: store,
       builder: (context, _) {
-        final announcements = widget.store.announcementsFor(
-          widget.selectedClass,
-        );
+        final announcements = store.announcementsFor(selectedClass);
         final isEmpty = announcements.isEmpty;
 
         return Scaffold(
           appBar: AppBar(
-            title: Text('${widget.selectedClass} · Зарлал'),
+            title: Text('$selectedClass · Зарлал'),
             centerTitle: true,
           ),
           floatingActionButton: FloatingActionButton(
-            onPressed: () => _openCreateScreen(),
+            onPressed: () => _openCreateScreen(context),
             tooltip: 'Шинэ зарлал',
             child: const Icon(Icons.add),
           ),
@@ -108,12 +117,15 @@ class _AnnouncementScreenState extends State<AnnouncementScreen> {
                   ),
                   children: [
                     ...announcements.map((item) {
+                      final isUnread = store.isAnnouncementUnread(item.id);
+
                       return Card(
                         child: InkWell(
                           borderRadius: BorderRadius.circular(
                             AppSpacing.radius,
                           ),
-                          onLongPress: () => _onLongPress(item),
+                          onTap: () => _openDetail(context, item),
+                          onLongPress: () => _onLongPress(context, item),
                           child: Padding(
                             padding: const EdgeInsets.all(AppSpacing.card),
                             child: Row(
@@ -135,11 +147,42 @@ class _AnnouncementScreenState extends State<AnnouncementScreen> {
                                           height: AppSpacing.itemSm,
                                         ),
                                       ],
-                                      Text(
-                                        item.title,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              item.title,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                          if (isUnread)
+                                            Container(
+                                              margin: const EdgeInsets.only(
+                                                left: 8,
+                                              ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 2,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: AppColors.primary
+                                                    .withValues(alpha: 0.12),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: const Text(
+                                                'Шинэ',
+                                                style: TextStyle(
+                                                  color: AppColors.primary,
+                                                  fontWeight: FontWeight.w700,
+                                                  fontSize: 11,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
                                       ),
                                       const SizedBox(height: AppSpacing.itemSm),
                                       Text(item.date),
@@ -155,7 +198,7 @@ class _AnnouncementScreenState extends State<AnnouncementScreen> {
                                 PopupMenuButton<String>(
                                   tooltip: 'Цэс',
                                   onSelected: (value) =>
-                                      _onMenuSelected(item, value),
+                                      _onMenuSelected(context, item, value),
                                   itemBuilder: (context) => const [
                                     PopupMenuItem(
                                       value: 'edit',

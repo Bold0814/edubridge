@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/account_status.dart';
 import '../models/announcement.dart';
+import '../models/announcement_read_receipt.dart';
 import '../models/app_role.dart';
 import '../models/app_settings.dart';
 import '../models/attendance_record.dart';
@@ -14,6 +15,7 @@ import '../models/school.dart';
 import '../models/school_class.dart';
 import '../models/school_settings.dart';
 import '../models/student.dart';
+import '../models/student_homework_status.dart';
 import '../models/subject.dart';
 import '../models/teacher.dart';
 import '../models/teacher_assigned_class.dart';
@@ -23,6 +25,7 @@ import '../models/user_account.dart';
 import '../repositories/edubridge_repository.dart';
 import '../services/database_service.dart';
 import '../services/password_hasher.dart';
+import '../services/password_rules.dart';
 import '../services/phone_normalizer.dart';
 import '../services/pin_rules.dart';
 import '../services/student_login_ids.dart';
@@ -62,8 +65,10 @@ enum LoginResult {
   missingUsername,
   missingPassword,
   invalidCredentials,
+  invalidLearnerCredentials,
   inactive,
   pendingActivation,
+  temporarilyLocked,
 }
 
 extension LoginResultMessage on LoginResult {
@@ -76,11 +81,15 @@ extension LoginResultMessage on LoginResult {
       case LoginResult.missingPassword:
         return 'PIN эсвэл нууц үгээ оруулна уу';
       case LoginResult.invalidCredentials:
-        return 'Нэвтрэх нэр эсвэл PIN буруу байна.';
+        return 'Нэвтрэх нэр эсвэл нууц үг буруу байна.';
+      case LoginResult.invalidLearnerCredentials:
+        return 'Нэвтрэх мэдээлэл буруу байна.';
       case LoginResult.inactive:
         return 'Энэ бүртгэл идэвхгүй байна';
       case LoginResult.pendingActivation:
         return 'Энэ бүртгэл идэвхжээгүй байна. Анх удаа нэвтрэх хэсгээр орно уу.';
+      case LoginResult.temporarilyLocked:
+        return 'Олон удаа буруу оролдлоо. Түр хүлээгээд дахин оролдоно уу.';
     }
   }
 }
@@ -121,6 +130,8 @@ class AppStore extends ChangeNotifier {
   List<Guardian> _guardians = const [];
   List<GuardianStudent> _guardianStudentLinks = const [];
   List<UserAccount> _userAccounts = const [];
+  List<StudentHomeworkStatus> _studentHomeworkStatuses = const [];
+  List<AnnouncementReadReceipt> _announcementReadReceipts = const [];
   SchoolSettings _schoolSettings = SchoolSettings.defaults;
   AppSettings _settings = AppSettings.defaults;
   final Map<String, List<AttendanceRecord>> _attendanceByClass = {};
@@ -148,6 +159,8 @@ class AppStore extends ChangeNotifier {
   int _userIdCounter = 100;
   int _membershipIdCounter = 100;
   int _schoolIdCounter = 100;
+  int _studentHomeworkStatusIdCounter = 100;
+  int _announcementReadReceiptIdCounter = 100;
 
   bool isLoaded = false;
 
@@ -535,6 +548,9 @@ class AppStore extends ChangeNotifier {
     _grades = await _repository.loadGrades();
     _homework = await _repository.loadHomework();
     _announcements = await _repository.loadAnnouncements();
+    _studentHomeworkStatuses = await _repository.loadStudentHomeworkStatuses();
+    _announcementReadReceipts = await _repository
+        .loadAllAnnouncementReadReceipts();
     _teacherNotes = await _repository.loadTeacherNotes();
     _lessonPeriods = await _repository.loadLessonPeriods();
     _classTimetable = await _repository.loadClassTimetable();
@@ -804,6 +820,7 @@ class AppStore extends ChangeNotifier {
     String? schoolId,
     String? homeroomTeacherId,
   }) async {
+    _ensureCanManageSchoolStructure();
     final trimmed = name.trim();
     if (trimmed.isEmpty) throw ArgumentError('EMPTY_CLASS');
     final sid = schoolId ?? _effectiveSchoolId;
@@ -1611,6 +1628,13 @@ class AppStore extends ChangeNotifier {
   /// Admin membership for [activeSchoolId] may add/edit/delete students.
   bool get canManageStudents => hasAdminPermissionForActiveSchool;
 
+  /// Admin-only school structure: classes, teachers, subjects, assignments,
+  /// timetable, periods, user accounts.
+  bool get canManageSchoolStructure => hasAdminPermissionForActiveSchool;
+
+  /// Admin-only timetable / lesson-period management.
+  bool get canManageTimetable => hasAdminPermissionForActiveSchool;
+
   /// Enforces student management only for signed-in non-admin sessions.
   /// Bootstrap / seed writes (no active user) remain allowed.
   void _ensureCanManageStudents() {
@@ -1619,6 +1643,66 @@ class AppStore extends ChangeNotifier {
     if (userId == null) return;
     throw const PermissionDeniedException();
   }
+
+  void _ensureCanManageSchoolStructure() {
+    if (canManageSchoolStructure) return;
+    final userId = _activeContext.userId ?? _selectedDevUserId;
+    if (userId == null) return;
+    throw const PermissionDeniedException();
+  }
+
+  void _ensureCanManageTimetable() {
+    if (canManageTimetable) return;
+    final userId = _activeContext.userId ?? _selectedDevUserId;
+    if (userId == null) return;
+    throw const PermissionDeniedException();
+  }
+
+  static const _maxFailedPinAttempts = 5;
+  static const _pinLockDuration = Duration(minutes: 5);
+
+  bool _isPinLocked(UserAccount account, {DateTime? now}) {
+    final until = account.pinLockedUntil;
+    if (until == null) return false;
+    return until.isAfter(now ?? DateTime.now());
+  }
+
+  Future<void> _recordFailedPinAttempt(UserAccount account) async {
+    final now = DateTime.now();
+    final nextAttempts = account.failedPinAttempts + 1;
+    final lockedUntil = nextAttempts >= _maxFailedPinAttempts
+        ? now.add(_pinLockDuration)
+        : account.pinLockedUntil;
+    final updated = account.copyWith(
+      failedPinAttempts: nextAttempts >= _maxFailedPinAttempts
+          ? 0
+          : nextAttempts,
+      pinLockedUntil: lockedUntil,
+    );
+    await _repository.updateUserAccount(updated);
+    _userAccounts = [
+      for (final user in _userAccounts)
+        if (user.id == updated.id) updated else user,
+    ];
+  }
+
+  Future<void> _resetPinAttempts(UserAccount account) async {
+    if (account.failedPinAttempts == 0 && account.pinLockedUntil == null) {
+      return;
+    }
+    final updated = account.copyWith(
+      failedPinAttempts: 0,
+      clearPinLockedUntil: true,
+    );
+    await _repository.updateUserAccount(updated);
+    _userAccounts = [
+      for (final user in _userAccounts)
+        if (user.id == updated.id) updated else user,
+    ];
+  }
+
+  bool _usesPinAuth(UserAccount account) =>
+      account.role == AppRole.guardian || account.role == AppRole.student;
 
   /// Name of the active teaching subject, if [activeContext.subjectId] is set.
   String? get activeSubjectName {
@@ -1966,6 +2050,18 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
+  /// Finds any account whose username matches the canonical phone.
+  UserAccount? findAccountByLoginPhone(String phone) {
+    final normalized = PhoneNormalizer.normalize(phone);
+    if (normalized.isEmpty) return null;
+    for (final user in _userAccounts) {
+      if (PhoneNormalizer.normalize(user.username) == normalized) {
+        return user;
+      }
+    }
+    return null;
+  }
+
   Guardian? guardianById(String? id) {
     if (id == null) return null;
     for (final g in _guardians) {
@@ -2064,6 +2160,9 @@ class AppStore extends ChangeNotifier {
   ///
   /// [username] may be an admin/teacher username, guardian phone, or student code.
   /// Role is resolved from the matched account — never from a pre-selected role.
+  ///
+  /// Password strength rules ([PasswordRules]) are NOT applied here — only hash
+  /// verification against the stored value (legacy weak passwords remain valid).
   Future<LoginResult> login({
     required String username,
     required String password,
@@ -2083,18 +2182,61 @@ class AppStore extends ChangeNotifier {
         resolved.passwordHash.isEmpty) {
       return LoginResult.pendingActivation;
     }
+
+    final usesPin = _usesPinAuth(resolved);
+    if (usesPin && _isPinLocked(resolved)) {
+      return LoginResult.temporarilyLocked;
+    }
+
+    // Verify only — never run PasswordRules / PinRules strength checks at login.
     if (!PasswordHasher.verifyPassword(password, resolved.passwordHash)) {
+      if (usesPin) {
+        await _recordFailedPinAttempt(resolved);
+        final refreshed = userById(resolved.id) ?? resolved;
+        if (_isPinLocked(refreshed)) {
+          return LoginResult.temporarilyLocked;
+        }
+        return LoginResult.invalidLearnerCredentials;
+      }
       return LoginResult.invalidCredentials;
     }
 
+    if (usesPin) {
+      await _resetPinAttempts(resolved);
+    }
+
+    // Optional silent upgrade: re-store hash in current format when already current
+    // (no-op for salt:hash). Kept for forward-compatible migration hooks.
+    await _maybeMigratePasswordHash(resolved, password);
+
     await selectDevelopmentUser(resolved, rememberMe: rememberMe);
     return LoginResult.success;
+  }
+
+  /// Rehashes to the current format only when verification already succeeded and
+  /// the stored value is a recognized legacy layout. Never logs the secret.
+  Future<void> _maybeMigratePasswordHash(
+    UserAccount account,
+    String plainPassword,
+  ) async {
+    if (!PasswordHasher.needsRehash(account.passwordHash)) return;
+    final updated = account.copyWith(
+      passwordHash: PasswordHasher.hashPassword(plainPassword),
+    );
+    await _repository.updateUserAccount(updated);
+    _userAccounts = [
+      for (final user in _userAccounts)
+        if (user.id == updated.id) updated else user,
+    ];
   }
 
   /// Resolves identifier to a candidate account without verifying the secret.
   UserAccount? _resolveLoginCandidate(String identifier) {
     final byUsername = userByUsername(identifier);
     if (byUsername != null) return byUsername;
+
+    final byLoginPhone = findAccountByLoginPhone(identifier);
+    if (byLoginPhone != null) return byLoginPhone;
 
     final byPhone = findGuardianAccountByNormalizedPhone(identifier);
     if (byPhone != null) return byPhone;
@@ -2202,6 +2344,7 @@ class AppStore extends ChangeNotifier {
     UserAccount user, {
     required String plainPassword,
   }) async {
+    _ensureCanManageSchoolStructure();
     final cleaned = UserAccount(
       id: user.id,
       username: user.username.trim(),
@@ -2236,6 +2379,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> updateUserAccount(UserAccount user) async {
+    _ensureCanManageSchoolStructure();
     final cleaned = UserAccount(
       id: user.id,
       username: user.username.trim(),
@@ -2249,6 +2393,9 @@ class AppStore extends ChangeNotifier {
       isActive: user.isActive,
       status: user.status,
       createdAt: user.createdAt,
+      failedPinAttempts: user.failedPinAttempts,
+      pinLockedUntil: user.pinLockedUntil,
+      requirePasswordChange: user.requirePasswordChange,
     );
     _validateUserLinks(cleaned);
     await _repository.updateUserAccount(cleaned);
@@ -2264,6 +2411,7 @@ class AppStore extends ChangeNotifier {
     String userId, {
     String? temporaryPassword,
   }) async {
+    _ensureCanManageSchoolStructure();
     final user = userById(userId);
     if (user == null) throw ArgumentError('NOT_FOUND');
     final plain = temporaryPassword ?? 'test123';
@@ -2283,6 +2431,279 @@ class AppStore extends ChangeNotifier {
     final user = userById(userId);
     if (user == null) return;
     await updateUserAccount(user.copyWith(isActive: false));
+  }
+
+  Future<void> activateUserAccount(String userId) async {
+    final user = userById(userId);
+    if (user == null) return;
+    await updateUserAccount(user.copyWith(isActive: true));
+  }
+
+  /// Teacher-role login account linked to a teacher profile.
+  ///
+  /// Never returns an admin account that shares the same [teacherId] — admin
+  /// passwords must not be reset via the teacher form.
+  UserAccount? loginAccountForTeacher(String teacherId) {
+    for (final user in _userAccounts) {
+      if (user.teacherId == teacherId && user.role == AppRole.teacher) {
+        return user;
+      }
+    }
+    return null;
+  }
+
+  /// Admin account that also links to this teacher profile (admin+teacher).
+  UserAccount? adminAccountForTeacher(String teacherId) {
+    for (final user in _userAccounts) {
+      if (user.teacherId == teacherId && user.role == AppRole.admin) {
+        return user;
+      }
+    }
+    return null;
+  }
+
+  /// Mongolian status for the teacher login section.
+  String teacherLoginStatusLabel(String teacherId) {
+    final account = loginAccountForTeacher(teacherId);
+    if (account != null) {
+      if (!account.isActive) return 'Идэвхгүй';
+      return 'Идэвхтэй';
+    }
+    if (adminAccountForTeacher(teacherId) != null) {
+      return 'Админ эрхээр нэвтэрнэ';
+    }
+    return 'Эрх үүсээгүй';
+  }
+
+  bool teacherHasLoginAccount(String teacherId) =>
+      loginAccountForTeacher(teacherId) != null;
+
+  /// Creates a teacher profile, optionally with one teacher login account.
+  ///
+  /// Login username is always the teacher's normalized phone.
+  /// Returns whether a login account was created.
+  Future<bool> createTeacherWithOptionalLogin({
+    required Teacher teacher,
+    bool allowDuplicateName = false,
+    bool createLogin = false,
+    String? password,
+    String? passwordConfirm,
+  }) async {
+    _ensureCanManageSchoolStructure();
+    final name = teacher.fullName.trim();
+    if (name.isEmpty) throw ArgumentError('EMPTY');
+    final schoolId = teacher.schoolId.isNotEmpty
+        ? teacher.schoolId
+        : _effectiveSchoolId;
+    if (!allowDuplicateName &&
+        _teachers.any(
+          (t) => t.schoolId == schoolId && t.fullName.trim() == name,
+        )) {
+      throw ArgumentError('DUPLICATE');
+    }
+
+    final phone = PhoneNormalizer.normalize(teacher.phone);
+    final saved = teacher.copyWith(
+      fullName: name,
+      schoolId: schoolId,
+      phone: phone,
+    );
+
+    UserAccount? account;
+    UserSchoolMembership? membership;
+    if (createLogin) {
+      if (phone.isEmpty) throw ArgumentError('EMPTY_PHONE');
+      final pwd = password ?? '';
+      final confirm = passwordConfirm ?? '';
+      final pwdError = PasswordRules.validateNewPassword(pwd, confirm);
+      if (pwdError != null) {
+        if (pwd != confirm) throw ArgumentError('PASSWORD_MISMATCH');
+        throw ArgumentError('INVALID_PASSWORD');
+      }
+      if (findAccountByLoginPhone(phone) != null) {
+        throw ArgumentError('DUPLICATE_USERNAME');
+      }
+      if (teacherHasLoginAccount(saved.id)) {
+        throw ArgumentError('TEACHER_ACCOUNT_EXISTS');
+      }
+
+      account = UserAccount(
+        id: nextUserId(),
+        username: phone,
+        passwordHash: PasswordHasher.hashPassword(pwd),
+        role: AppRole.teacher,
+        teacherId: saved.id,
+        status: AccountStatus.active,
+        requirePasswordChange: true,
+        createdAt: DateTime.now(),
+      );
+      membership = UserSchoolMembership(
+        id: nextMembershipId(),
+        userId: account.id,
+        schoolId: schoolId,
+        role: AppRole.teacher,
+        teacherId: saved.id,
+      );
+    }
+
+    await _repository.createTeacherWithOptionalLoginTxn(
+      teacher: saved,
+      account: account,
+      membership: membership,
+    );
+
+    _teachers = [..._teachers, saved]
+      ..sort((a, b) => a.fullName.compareTo(b.fullName));
+    if (account != null) {
+      _userAccounts = [..._userAccounts, account]
+        ..sort((a, b) => a.username.compareTo(b.username));
+    }
+    if (membership != null) {
+      _memberships = [..._memberships, membership];
+    }
+    notifyListeners();
+    return account != null;
+  }
+
+  /// Creates a teacher-role login for an existing teacher profile.
+  /// Username is the teacher's normalized phone.
+  Future<void> createLoginForExistingTeacher({
+    required String teacherId,
+    required String password,
+    required String passwordConfirm,
+  }) async {
+    _ensureCanManageSchoolStructure();
+    final teacher = teacherById(teacherId);
+    if (teacher == null) throw ArgumentError('NOT_FOUND');
+    if (teacherHasLoginAccount(teacherId)) {
+      throw ArgumentError('TEACHER_ACCOUNT_EXISTS');
+    }
+
+    final phone = PhoneNormalizer.normalize(teacher.phone);
+    if (phone.isEmpty) throw ArgumentError('EMPTY_PHONE');
+    final pwdError = PasswordRules.validateNewPassword(
+      password,
+      passwordConfirm,
+    );
+    if (pwdError != null) {
+      if (password != passwordConfirm) throw ArgumentError('PASSWORD_MISMATCH');
+      throw ArgumentError('INVALID_PASSWORD');
+    }
+    if (findAccountByLoginPhone(phone) != null) {
+      throw ArgumentError('DUPLICATE_USERNAME');
+    }
+
+    if (teacher.phone != phone) {
+      await updateTeacher(teacher.copyWith(phone: phone), allowDuplicate: true);
+    }
+
+    final account = UserAccount(
+      id: nextUserId(),
+      username: phone,
+      passwordHash: PasswordHasher.hashPassword(password),
+      role: AppRole.teacher,
+      teacherId: teacherId,
+      status: AccountStatus.active,
+      requirePasswordChange: true,
+      createdAt: DateTime.now(),
+    );
+    _validateUserLinks(account);
+    final membership = UserSchoolMembership(
+      id: nextMembershipId(),
+      userId: account.id,
+      schoolId: teacher.schoolId.isNotEmpty
+          ? teacher.schoolId
+          : _effectiveSchoolId,
+      role: AppRole.teacher,
+      teacherId: teacherId,
+    );
+
+    await _repository.provisionTeacherLoginTxn(
+      account: account,
+      membership: membership,
+    );
+    _userAccounts = [..._userAccounts, account]
+      ..sort((a, b) => a.username.compareTo(b.username));
+    _memberships = [..._memberships, membership];
+    notifyListeners();
+  }
+
+  Future<void> resetTeacherLoginPassword({
+    required String teacherId,
+    required String password,
+    required String passwordConfirm,
+  }) async {
+    _ensureCanManageSchoolStructure();
+    final account = loginAccountForTeacher(teacherId);
+    if (account == null) throw ArgumentError('NOT_FOUND');
+    if (account.role != AppRole.teacher) {
+      throw ArgumentError('NOT_TEACHER_ACCOUNT');
+    }
+    final pwdError = PasswordRules.validateNewPassword(
+      password,
+      passwordConfirm,
+    );
+    if (pwdError != null) {
+      if (password != passwordConfirm) throw ArgumentError('PASSWORD_MISMATCH');
+      throw ArgumentError('INVALID_PASSWORD');
+    }
+    final updated = account.copyWith(
+      passwordHash: PasswordHasher.hashPassword(password),
+      requirePasswordChange: true,
+    );
+    await _repository.updateUserAccount(updated);
+    _userAccounts = [
+      for (final u in _userAccounts)
+        if (u.id == updated.id) updated else u,
+    ];
+    notifyListeners();
+  }
+
+  /// Completes forced password change after temporary-password login.
+  Future<void> completeRequiredPasswordChange({
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    final user = selectedDevelopmentUser;
+    if (user == null) throw ArgumentError('NOT_FOUND');
+    if (!user.requirePasswordChange) throw ArgumentError('NOT_REQUIRED');
+    final pwdError = PasswordRules.validateNewPassword(
+      newPassword,
+      confirmPassword,
+    );
+    if (pwdError != null) {
+      if (newPassword != confirmPassword) {
+        throw ArgumentError('PASSWORD_MISMATCH');
+      }
+      throw ArgumentError('INVALID_PASSWORD');
+    }
+    final updated = user.copyWith(
+      passwordHash: PasswordHasher.hashPassword(newPassword),
+      requirePasswordChange: false,
+    );
+    await _repository.updateUserAccount(updated);
+    _userAccounts = [
+      for (final u in _userAccounts)
+        if (u.id == updated.id) updated else u,
+    ];
+    notifyListeners();
+  }
+
+  Future<void> setTeacherLoginActive({
+    required String teacherId,
+    required bool isActive,
+  }) async {
+    _ensureCanManageSchoolStructure();
+    final account = loginAccountForTeacher(teacherId);
+    if (account == null) throw ArgumentError('NOT_FOUND');
+    if (account.role != AppRole.teacher) {
+      throw ArgumentError('NOT_TEACHER_ACCOUNT');
+    }
+    if (isActive) {
+      await activateUserAccount(account.id);
+    } else {
+      await deactivateUserAccount(account.id);
+    }
   }
 
   Future<void> addGuardian(Guardian guardian) async {
@@ -2444,6 +2865,7 @@ class AppStore extends ChangeNotifier {
     Teacher teacher, {
     bool allowDuplicate = false,
   }) async {
+    _ensureCanManageSchoolStructure();
     final name = teacher.fullName.trim();
     if (name.isEmpty) throw ArgumentError('EMPTY');
     final schoolId = teacher.schoolId.isNotEmpty
@@ -2466,6 +2888,7 @@ class AppStore extends ChangeNotifier {
     Teacher teacher, {
     bool allowDuplicate = false,
   }) async {
+    _ensureCanManageSchoolStructure();
     final name = teacher.fullName.trim();
     if (name.isEmpty) throw ArgumentError('EMPTY');
     final duplicate = _teachers.any(
@@ -2487,6 +2910,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deactivateTeacher(String teacherId) async {
+    _ensureCanManageSchoolStructure();
     final teacher = teacherById(teacherId);
     if (teacher == null) return;
     await updateTeacher(
@@ -2496,6 +2920,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addSubject(String rawName) async {
+    _ensureCanManageSchoolStructure();
     final name = rawName.trim();
     if (name.isEmpty) {
       throw ArgumentError('EMPTY');
@@ -2523,6 +2948,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> renameSubject(String oldName, String rawNewName) async {
+    _ensureCanManageSchoolStructure();
     final newName = rawNewName.trim();
     if (newName.isEmpty) {
       throw ArgumentError('EMPTY');
@@ -2552,6 +2978,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deleteSubject(String name) async {
+    _ensureCanManageSchoolStructure();
     final current = subjectByName(name);
     if (current == null) return;
     if (await _repository.subjectIsAssigned(current.id)) {
@@ -2580,6 +3007,7 @@ class AppStore extends ChangeNotifier {
     required String? homeroomTeacherId,
     required Map<int, String?> subjectTeacherIds,
   }) async {
+    _ensureCanManageSchoolStructure();
     final assignments = <ClassSubjectTeacher>[
       for (final entry in subjectTeacherIds.entries)
         if (entry.value != null && entry.value!.isNotEmpty)
@@ -2676,6 +3104,18 @@ class AppStore extends ChangeNotifier {
       final n = int.tryParse(item.id.replaceFirst('tt-', ''));
       if (n != null && n > _classTimetableIdCounter) {
         _classTimetableIdCounter = n;
+      }
+    }
+    for (final item in _studentHomeworkStatuses) {
+      final n = int.tryParse(item.id.replaceFirst('shs-', ''));
+      if (n != null && n > _studentHomeworkStatusIdCounter) {
+        _studentHomeworkStatusIdCounter = n;
+      }
+    }
+    for (final item in _announcementReadReceipts) {
+      final n = int.tryParse(item.id.replaceFirst('arr-', ''));
+      if (n != null && n > _announcementReadReceiptIdCounter) {
+        _announcementReadReceiptIdCounter = n;
       }
     }
     for (final membership in _memberships) {
@@ -2890,6 +3330,10 @@ class AppStore extends ChangeNotifier {
     );
   }
 
+  bool isAnnouncementUnread(String announcementId) {
+    return _unreadAnnouncementIds.contains(announcementId);
+  }
+
   int unreadAnnouncementCount(String className) {
     return _announcements
         .where(
@@ -2930,6 +3374,16 @@ class AppStore extends ChangeNotifier {
   String nextHomeworkId() {
     _homeworkIdCounter += 1;
     return 'hw-$_homeworkIdCounter';
+  }
+
+  String nextStudentHomeworkStatusId() {
+    _studentHomeworkStatusIdCounter += 1;
+    return 'shs-$_studentHomeworkStatusIdCounter';
+  }
+
+  String nextAnnouncementReadReceiptId() {
+    _announcementReadReceiptIdCounter += 1;
+    return 'arr-$_announcementReadReceiptIdCounter';
   }
 
   String nextGradeId() {
@@ -3010,6 +3464,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addLessonPeriod(LessonPeriod period) async {
+    _ensureCanManageTimetable();
     final schoolId = period.schoolId.isNotEmpty
         ? period.schoolId
         : _effectiveSchoolId;
@@ -3020,6 +3475,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> updateLessonPeriod(LessonPeriod period) async {
+    _ensureCanManageTimetable();
     await _repository.updateLessonPeriod(period);
     final index = _lessonPeriods.indexWhere((item) => item.id == period.id);
     if (index >= 0) {
@@ -3029,6 +3485,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deleteLessonPeriod(String id) async {
+    _ensureCanManageTimetable();
     await _repository.deleteLessonPeriod(id);
     _lessonPeriods.removeWhere((item) => item.id == id);
     _classTimetable.removeWhere((item) => item.periodId == id);
@@ -3036,6 +3493,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addClassTimetable(ClassTimetable entry) async {
+    _ensureCanManageTimetable();
     final existing = timetableSlot(
       classId: entry.classId,
       weekday: entry.weekday,
@@ -3050,6 +3508,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> updateClassTimetable(ClassTimetable entry) async {
+    _ensureCanManageTimetable();
     final conflict = timetableSlot(
       classId: entry.classId,
       weekday: entry.weekday,
@@ -3067,6 +3526,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> deleteClassTimetable(String id) async {
+    _ensureCanManageTimetable();
     await _repository.deleteClassTimetable(id);
     _classTimetable.removeWhere((item) => item.id == id);
     notifyListeners();
@@ -3162,12 +3622,264 @@ class AppStore extends ChangeNotifier {
     await _repository.deleteAnnouncement(id);
     _announcements.removeWhere((item) => item.id == id);
     _unreadAnnouncementIds.remove(id);
+    _announcementReadReceipts = [
+      for (final r in _announcementReadReceipts)
+        if (r.announcementId != id) r,
+    ];
     notifyListeners();
+  }
+
+  Future<void> markAnnouncementOpened(String announcementId) async {
+    Announcement? announcement;
+    for (final item in _announcements) {
+      if (item.id == announcementId) {
+        announcement = item;
+        break;
+      }
+    }
+    if (announcement == null) return;
+    if (!_matchesActiveSchool(announcement.schoolId)) return;
+
+    final userId = _activeContext.userId ?? _selectedDevUserId;
+    if (userId == null) return;
+    final role =
+        _activeContext.role ?? selectedDevelopmentUser?.role ?? AppRole.teacher;
+
+    // Audience receipts are for students/guardians only. Teachers/admins still
+    // clear the local unread badge when opening detail.
+    final trackReceipt = role == AppRole.student || role == AppRole.guardian;
+
+    String? studentId;
+    if (role == AppRole.student) {
+      studentId =
+          _activeContext.studentId ?? selectedDevelopmentUser?.studentId;
+    } else if (role == AppRole.guardian) {
+      studentId =
+          _guardianStudentId ??
+          _activeContext.selectedChildId ??
+          _activeContext.studentId;
+    }
+
+    var wroteReceipt = false;
+    if (trackReceipt) {
+      final already = _announcementReadReceipts.any(
+        (r) => r.announcementId == announcementId && r.userAccountId == userId,
+      );
+      if (!already) {
+        final receipt = AnnouncementReadReceipt(
+          id: nextAnnouncementReadReceiptId(),
+          schoolId: announcement.schoolId,
+          announcementId: announcementId,
+          userAccountId: userId,
+          role: role,
+          studentId: studentId,
+          readAt: DateTime.now(),
+        );
+        await _repository.upsertAnnouncementReadReceipt(receipt);
+        _announcementReadReceipts = [receipt, ..._announcementReadReceipts];
+        wroteReceipt = true;
+      }
+
+      if (!_guardianReadAnnouncementIds.contains(announcementId)) {
+        await _repository.markGuardianAnnouncementRead(announcementId);
+        _guardianReadAnnouncementIds.add(announcementId);
+        wroteReceipt = true;
+      }
+    }
+
+    final unreadBefore = _unreadAnnouncementIds.length;
+    _unreadAnnouncementIds.remove(announcementId);
+    if (wroteReceipt || _unreadAnnouncementIds.length != unreadBefore) {
+      notifyListeners();
+    }
+  }
+
+  int announcementReadCount(String announcementId) {
+    return announcementReadReceiptsFor(announcementId)
+        .where((r) => r.role == AppRole.student || r.role == AppRole.guardian)
+        .length;
+  }
+
+  List<AnnouncementReadReceipt> announcementReadReceiptsFor(
+    String announcementId,
+  ) {
+    return _announcementReadReceipts
+        .where(
+          (r) =>
+              r.announcementId == announcementId &&
+              _matchesActiveSchool(r.schoolId),
+        )
+        .toList(growable: false);
+  }
+
+  /// Expected audience = class students + linked active guardians.
+  int announcementUnreadAudienceCount(String announcementId, String className) {
+    final students = studentsFor(className);
+    final guardianIds = <String>{};
+    for (final student in students) {
+      for (final guardian in guardiansForStudent(student.id)) {
+        if (guardian.isActive) guardianIds.add(guardian.id);
+      }
+    }
+    final expected = students.length + guardianIds.length;
+    if (expected == 0) return 0;
+
+    final receipts = announcementReadReceiptsFor(announcementId);
+    final readKeys = <String>{};
+    for (final r in receipts) {
+      if (r.role == AppRole.student && r.studentId != null) {
+        readKeys.add('s:${r.studentId}');
+      } else if (r.role == AppRole.guardian) {
+        final user = userById(r.userAccountId);
+        final gid = user?.guardianId;
+        if (gid != null) readKeys.add('g:$gid');
+      }
+    }
+
+    var read = 0;
+    for (final student in students) {
+      if (readKeys.contains('s:${student.id}')) read += 1;
+    }
+    for (final gid in guardianIds) {
+      if (readKeys.contains('g:$gid')) read += 1;
+    }
+    final unread = expected - read;
+    return unread < 0 ? 0 : unread;
   }
 
   Future<void> addHomework(Homework homework) async {
     await _repository.insertHomework(homework);
     _homework.insert(0, homework);
+
+    final schoolId = _effectiveSchoolId;
+    final classId =
+        schoolClassById(homework.className)?.id ?? homework.className;
+    final now = DateTime.now();
+    final created = <StudentHomeworkStatus>[];
+    for (final student in studentsFor(homework.className)) {
+      final status = StudentHomeworkStatus(
+        id: nextStudentHomeworkStatusId(),
+        schoolId: schoolId,
+        classId: classId,
+        homeworkId: homework.id,
+        studentId: student.id,
+        status: StudentHomeworkStatusValue.pending,
+        updatedAt: now,
+      );
+      await _repository.upsertStudentHomeworkStatus(status);
+      created.add(status);
+    }
+    if (created.isNotEmpty) {
+      _studentHomeworkStatuses = [...created, ..._studentHomeworkStatuses];
+    }
+    notifyListeners();
+  }
+
+  List<StudentHomeworkStatus> homeworkStatusesForHomework(String homeworkId) {
+    return _studentHomeworkStatuses
+        .where(
+          (s) =>
+              s.homeworkId == homeworkId &&
+              s.isActive &&
+              _matchesActiveSchool(s.schoolId),
+        )
+        .toList(growable: false);
+  }
+
+  StudentHomeworkStatus? homeworkStatusForStudent({
+    required String homeworkId,
+    required String studentId,
+  }) {
+    for (final item in _studentHomeworkStatuses) {
+      if (item.homeworkId == homeworkId &&
+          item.studentId == studentId &&
+          item.isActive &&
+          _matchesActiveSchool(item.schoolId)) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  /// Effective status: persisted row or synthetic pending.
+  StudentHomeworkStatusValue effectiveHomeworkStatus({
+    required String homeworkId,
+    required String studentId,
+  }) {
+    return homeworkStatusForStudent(
+          homeworkId: homeworkId,
+          studentId: studentId,
+        )?.status ??
+        StudentHomeworkStatusValue.pending;
+  }
+
+  bool _canWriteHomeworkStatus(Homework homework) {
+    if (hasAdminPermissionForActiveSchool) return true;
+    final teacherId = _activeContext.teacherId;
+    if (teacherId == null) return false;
+    final access = assignedClassForActiveTeacher(homework.className);
+    if (access == null) return false;
+    final subject = subjectByName(homework.subject);
+    if (subject == null) return access.isHomeroom;
+    if (access.subjects.any((s) => s.id == subject.id)) return true;
+    return teacherIdForClassSubject(homework.className, subject.id) ==
+        teacherId;
+  }
+
+  void _ensureCanWriteHomeworkStatus(Homework homework) {
+    if (_canWriteHomeworkStatus(homework)) return;
+    final userId = _activeContext.userId ?? _selectedDevUserId;
+    if (userId == null) return;
+    throw const PermissionDeniedException();
+  }
+
+  Future<void> setStudentHomeworkStatus({
+    required String homeworkId,
+    required String studentId,
+    required StudentHomeworkStatusValue status,
+    String? teacherComment,
+  }) async {
+    Homework? homework;
+    for (final item in _homework) {
+      if (item.id == homeworkId) {
+        homework = item;
+        break;
+      }
+    }
+    if (homework == null) throw ArgumentError('NOT_FOUND');
+    _ensureCanWriteHomeworkStatus(homework);
+
+    final schoolId = _effectiveSchoolId;
+    final classId =
+        schoolClassById(homework.className)?.id ?? homework.className;
+    final now = DateTime.now();
+    final teacherId =
+        _activeContext.teacherId ?? resolveAuthorTeacherId(homework.className);
+    final existing = homeworkStatusForStudent(
+      homeworkId: homeworkId,
+      studentId: studentId,
+    );
+    final row = StudentHomeworkStatus(
+      id: existing?.id ?? nextStudentHomeworkStatusId(),
+      schoolId: schoolId,
+      classId: classId,
+      homeworkId: homeworkId,
+      studentId: studentId,
+      status: status,
+      checkedByTeacherId: teacherId,
+      checkedAt: now,
+      teacherComment: teacherComment == null
+          ? existing?.teacherComment
+          : (teacherComment.trim().isEmpty ? null : teacherComment.trim()),
+      updatedAt: now,
+    );
+    await _repository.upsertStudentHomeworkStatus(row);
+    final without = [
+      for (final item in _studentHomeworkStatuses)
+        if (!(item.homeworkId == homeworkId && item.studentId == studentId))
+          item,
+    ];
+    _studentHomeworkStatuses = [row, ...without];
     notifyListeners();
   }
 
@@ -3183,6 +3895,10 @@ class AppStore extends ChangeNotifier {
   Future<void> deleteHomework(String id) async {
     await _repository.deleteHomework(id);
     _homework.removeWhere((item) => item.id == id);
+    _studentHomeworkStatuses = [
+      for (final item in _studentHomeworkStatuses)
+        if (item.homeworkId != id) item,
+    ];
     notifyListeners();
   }
 

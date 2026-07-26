@@ -4,6 +4,7 @@ import '../models/app_role.dart';
 import '../models/school.dart';
 import '../models/user_account.dart';
 import '../screens/admin/admin_school_home_screen.dart';
+import '../screens/auth/change_password_screen.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/guardian/guardian_child_selection_screen.dart';
 import '../screens/guardian/guardian_home_screen.dart';
@@ -37,6 +38,12 @@ abstract final class AppNavigation {
     AppStore store, {
     bool preferLastSchool = true,
   }) async {
+    final user = store.selectedDevelopmentUser;
+    if (user != null && user.requirePasswordChange) {
+      _replace(context, ChangePasswordScreen(store: store));
+      return;
+    }
+
     final result = await store.resolveSchoolEntry(
       preferLastSchool: preferLastSchool,
     );

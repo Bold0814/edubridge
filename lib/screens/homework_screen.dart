@@ -6,6 +6,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../widgets/confirm_delete.dart';
 import 'homework_create_screen.dart';
+import 'homework_status_screen.dart';
 
 class HomeworkScreen extends StatelessWidget {
   const HomeworkScreen({
@@ -58,11 +59,25 @@ class HomeworkScreen extends StatelessWidget {
     if (!context.mounted) return;
   }
 
+  Future<void> _openStatus(BuildContext context, Homework item) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            HomeworkStatusScreen(store: store, homework: item),
+      ),
+    );
+  }
+
   Future<void> _onMenuSelected(
     BuildContext context,
     Homework item,
     String action,
   ) async {
+    if (action == 'status') {
+      await _openStatus(context, item);
+      return;
+    }
     if (action == 'edit') {
       await _openCreateScreen(context, existing: item);
       return;
@@ -77,7 +92,33 @@ class HomeworkScreen extends StatelessWidget {
   }
 
   Future<void> _onLongPress(BuildContext context, Homework item) async {
-    final action = await showEditDeleteMenu(context);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.checklist),
+                title: const Text('Гүйцэтгэл'),
+                onTap: () => Navigator.pop(sheetContext, 'status'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('Засах'),
+                onTap: () => Navigator.pop(sheetContext, 'edit'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Устгах'),
+                onTap: () => Navigator.pop(sheetContext, 'delete'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
     if (action == null || !context.mounted) return;
     await _onMenuSelected(context, item, action);
   }
@@ -140,6 +181,7 @@ class HomeworkScreen extends StatelessWidget {
                           borderRadius: BorderRadius.circular(
                             AppSpacing.radius,
                           ),
+                          onTap: () => _openStatus(context, item),
                           onLongPress: () => _onLongPress(context, item),
                           child: Padding(
                             padding: const EdgeInsets.all(AppSpacing.card),
@@ -193,6 +235,10 @@ class HomeworkScreen extends StatelessWidget {
                                   onSelected: (value) =>
                                       _onMenuSelected(context, item, value),
                                   itemBuilder: (context) => const [
+                                    PopupMenuItem(
+                                      value: 'status',
+                                      child: Text('Гүйцэтгэл'),
+                                    ),
                                     PopupMenuItem(
                                       value: 'edit',
                                       child: Text('✏️ Засах'),

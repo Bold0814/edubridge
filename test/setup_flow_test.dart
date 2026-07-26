@@ -212,25 +212,25 @@ void main() {
     );
   });
 
-  testWidgets('timetable and guardians remain in Settings', (tester) async {
+  testWidgets('periods and guardians remain in Settings', (tester) async {
     await tester.pumpWidget(MaterialApp(home: SettingsScreen(store: store)));
     await tester.pump();
 
     await tester.scrollUntilVisible(
-      find.text('Хичээлийн хуваарь'),
+      find.text('Хичээлийн цаг'),
       300,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Хичээлийн хуваарь'), findsOneWidget);
+    expect(find.text('Хичээлийн цаг'), findsOneWidget);
 
     await tester.scrollUntilVisible(
-      find.text('Асран хамгаалагч удирдах'),
+      find.text('Асран хамгаалагчийн холбоос засах'),
       300,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Асран хамгаалагч удирдах'), findsOneWidget);
+    expect(find.text('Асран хамгаалагчийн холбоос засах'), findsOneWidget);
 
-    // Screens themselves still exist for Settings navigation.
+    // Class timetable lives on admin home; screens still exist.
     expect(ClassTimetableSettingsScreen(store: store), isA<Widget>());
     expect(GuardianListScreen(store: store), isA<Widget>());
   });

@@ -15,7 +15,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'edubridge.db';
-  static const _dbVersion = 12;
+  static const _dbVersion = 14;
 
   /// Default school for single-school installs and migrated data.
   static const defaultSchoolId = 'sch-default';
@@ -132,6 +132,12 @@ class DatabaseService {
     }
     if (oldVersion < 12) {
       await _migrateAccountActivationV12(db);
+    }
+    if (oldVersion < 13) {
+      await _migrateStabilizationV13(db);
+    }
+    if (oldVersion < 14) {
+      await _migrateRequirePasswordChangeV14(db);
     }
   }
 
@@ -297,6 +303,7 @@ class DatabaseService {
     await _createTeacherNotesTable(db);
     await _createTimetableTables(db);
     await _createSchoolContextTables(db);
+    await _createStabilizationV13Tables(db);
     await _insertDefaultSchool(db);
 
     const classNames = [
@@ -520,7 +527,10 @@ class DatabaseService {
         student_id TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
         account_status TEXT NOT NULL DEFAULT 'active',
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        failed_pin_attempts INTEGER NOT NULL DEFAULT 0,
+        pin_locked_until TEXT,
+        require_password_change INTEGER NOT NULL DEFAULT 0
       )
     ''');
 
@@ -872,6 +882,103 @@ class DatabaseService {
       await db.update('user_accounts', {
         'account_status': 'active',
       }, where: "account_status IS NULL OR account_status = ''");
+    } catch (_) {}
+  }
+
+  /// Homework check status, announcement read receipts, PIN lockout columns.
+  Future<void> _createStabilizationV13Tables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS student_homework_status (
+        id TEXT PRIMARY KEY,
+        school_id TEXT NOT NULL,
+        class_id TEXT NOT NULL,
+        homework_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        checked_by_teacher_id TEXT,
+        checked_at TEXT,
+        teacher_comment TEXT,
+        updated_at TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1
+      )
+    ''');
+
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_student_homework_status_unique '
+      'ON student_homework_status(school_id, homework_id, student_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_student_homework_status_student '
+      'ON student_homework_status(student_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_student_homework_status_homework '
+      'ON student_homework_status(homework_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_student_homework_status_status '
+      'ON student_homework_status(status)',
+    );
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS announcement_read_receipts (
+        id TEXT PRIMARY KEY,
+        school_id TEXT NOT NULL,
+        announcement_id TEXT NOT NULL,
+        user_account_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        student_id TEXT,
+        read_at TEXT NOT NULL
+      )
+    ''');
+
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_announcement_read_receipts_unique '
+      'ON announcement_read_receipts(school_id, announcement_id, user_account_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_announcement_read_receipts_announcement '
+      'ON announcement_read_receipts(announcement_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_announcement_read_receipts_user '
+      'ON announcement_read_receipts(user_account_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_announcement_read_receipts_student '
+      'ON announcement_read_receipts(student_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_announcement_read_receipts_read_at '
+      'ON announcement_read_receipts(read_at)',
+    );
+  }
+
+  Future<void> _migrateStabilizationV13(Database db) async {
+    await _createStabilizationV13Tables(db);
+
+    Future<void> addColumn(String sql) async {
+      try {
+        await db.execute(sql);
+      } catch (_) {}
+    }
+
+    await addColumn(
+      'ALTER TABLE user_accounts ADD COLUMN failed_pin_attempts '
+      'INTEGER NOT NULL DEFAULT 0',
+    );
+    await addColumn(
+      'ALTER TABLE user_accounts ADD COLUMN pin_locked_until TEXT',
+    );
+  }
+
+  /// Teacher temporary-password must-change flag.
+  Future<void> _migrateRequirePasswordChangeV14(Database db) async {
+    try {
+      await db.execute(
+        'ALTER TABLE user_accounts ADD COLUMN require_password_change '
+        'INTEGER NOT NULL DEFAULT 0',
+      );
     } catch (_) {}
   }
 }

@@ -14,6 +14,9 @@ class UserAccount {
     this.isActive = true,
     this.status = AccountStatus.active,
     required this.createdAt,
+    this.failedPinAttempts = 0,
+    this.pinLockedUntil,
+    this.requirePasswordChange = false,
   });
 
   final String id;
@@ -29,6 +32,11 @@ class UserAccount {
   final bool isActive;
   final AccountStatus status;
   final DateTime createdAt;
+  final int failedPinAttempts;
+  final DateTime? pinLockedUntil;
+
+  /// Temporary password must be replaced after first successful login.
+  final bool requirePasswordChange;
 
   bool get isPendingActivation => status == AccountStatus.pendingActivation;
 
@@ -57,9 +65,13 @@ class UserAccount {
     String? studentId,
     bool? isActive,
     AccountStatus? status,
+    int? failedPinAttempts,
+    DateTime? pinLockedUntil,
+    bool? requirePasswordChange,
     bool clearTeacherId = false,
     bool clearGuardianId = false,
     bool clearStudentId = false,
+    bool clearPinLockedUntil = false,
   }) {
     return UserAccount(
       id: id,
@@ -72,6 +84,12 @@ class UserAccount {
       isActive: isActive ?? this.isActive,
       status: status ?? this.status,
       createdAt: createdAt,
+      failedPinAttempts: failedPinAttempts ?? this.failedPinAttempts,
+      pinLockedUntil: clearPinLockedUntil
+          ? null
+          : (pinLockedUntil ?? this.pinLockedUntil),
+      requirePasswordChange:
+          requirePasswordChange ?? this.requirePasswordChange,
     );
   }
 }

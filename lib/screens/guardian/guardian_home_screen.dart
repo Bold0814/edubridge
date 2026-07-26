@@ -10,6 +10,7 @@ import '../../widgets/summaries/learner_timeline_panel.dart';
 import '../../widgets/today_timetable_card.dart';
 import '../../widgets/session_menu_button.dart';
 import '../teacher_notes_screen.dart';
+import '../timetable_viewer_screen.dart';
 import 'guardian_announcements_screen.dart';
 import 'guardian_attendance_screen.dart';
 import 'guardian_grades_screen.dart';
@@ -83,6 +84,26 @@ class GuardianHomeScreen extends StatelessWidget {
                         lessons: TimetableService.todayLessonsForClass(
                           store,
                           selected.className,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.item),
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.calendar_month_outlined),
+                          title: const Text('Хичээлийн хуваарь'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => TimetableViewerScreen(
+                                  store: store,
+                                  title: 'Хичээлийн хуваарь',
+                                  mode: TimetableViewerMode.guardian,
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                       const SizedBox(height: AppSpacing.sectionSm),

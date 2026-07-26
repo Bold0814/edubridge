@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/timetable.dart';
 import '../state/app_store.dart';
 import '../theme/app_spacing.dart';
+import '../widgets/admin_permission_gate.dart';
 import '../widgets/confirm_delete.dart';
 
 /// Settings: assign subject to class + weekday + period (Хичээлийн хуваарь).
@@ -57,109 +58,115 @@ class _ClassTimetableSettingsScreenState
     final theme = Theme.of(context);
     final classes = widget.store.classes;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Хичээлийн хуваарь')),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _classId == null ? null : () => _openForm(),
-        child: const Icon(Icons.add),
-      ),
-      body: ListenableBuilder(
-        listenable: widget.store,
-        builder: (context, _) {
-          final periods = widget.store.lessonPeriods;
-          final classId = _classId;
-          final entries = classId == null
-              ? const <ClassTimetable>[]
-              : widget.store.timetableForClassWeekday(classId, _weekday);
+    return AdminPermissionGate(
+      store: widget.store,
+      child: Scaffold(
+        appBar: AppBar(title: const Text('Хичээлийн хуваарь')),
+        floatingActionButton: FloatingActionButton(
+          onPressed: _classId == null ? null : () => _openForm(),
+          child: const Icon(Icons.add),
+        ),
+        body: ListenableBuilder(
+          listenable: widget.store,
+          builder: (context, _) {
+            final periods = widget.store.lessonPeriods;
+            final classId = _classId;
+            final entries = classId == null
+                ? const <ClassTimetable>[]
+                : widget.store.timetableForClassWeekday(classId, _weekday);
 
-          return ListView(
-            padding: const EdgeInsets.all(AppSpacing.page),
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: _classId,
-                decoration: const InputDecoration(labelText: 'Анги'),
-                items: [
-                  for (final name in classes)
-                    DropdownMenuItem(value: name, child: Text('$name анги')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() => _classId = value);
-                },
-              ),
-              const SizedBox(height: AppSpacing.gap),
-              DropdownButtonFormField<int>(
-                initialValue: _weekday,
-                decoration: const InputDecoration(labelText: 'Гариг'),
-                items: [
-                  for (final day in TimetableWeekday.schoolDays)
-                    DropdownMenuItem(
-                      value: day,
-                      child: Text(TimetableWeekday.label(day)),
-                    ),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() => _weekday = value);
-                },
-              ),
-              const SizedBox(height: AppSpacing.sectionSm),
-              if (periods.isEmpty)
-                const Text(
-                  'Эхлээд Тохиргоо → Хичээлийн цаг хэсэгт цаг нэмнэ үү.',
-                )
-              else if (entries.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: Text('Энэ өдөр хуваарь байхгүй')),
-                )
-              else
-                ...entries.map((entry) {
-                  final period = widget.store.periodById(entry.periodId);
-                  final subject = widget.store.subjectById(entry.subjectId);
-                  final teacher = widget.store.teacherForClassSubject(
-                    entry.classId,
-                    entry.subjectId,
-                  );
-                  return Card(
-                    child: ListTile(
-                      title: Text(
-                        period == null
-                            ? 'Цаг'
-                            : '${period.periodNumber}-р цаг · ${period.timeLabel}',
-                      ),
-                      subtitle: Text(
-                        [
-                          subject?.name ?? 'Хичээл',
-                          if (teacher != null) teacher.fullName,
-                        ].join(' · '),
-                      ),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (value) async {
-                          if (value == 'edit') {
-                            await _openForm(existing: entry);
-                          } else if (value == 'delete') {
-                            await _delete(entry);
-                          }
-                        },
-                        itemBuilder: (context) => const [
-                          PopupMenuItem(value: 'edit', child: Text('Засах')),
-                          PopupMenuItem(value: 'delete', child: Text('Устгах')),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-              const SizedBox(height: AppSpacing.section),
-              Text(
-                'Багш автоматаар анги + хичээлийн оноолтоос тодорхойлогдоно.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+            return ListView(
+              padding: const EdgeInsets.all(AppSpacing.page),
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: _classId,
+                  decoration: const InputDecoration(labelText: 'Анги'),
+                  items: [
+                    for (final name in classes)
+                      DropdownMenuItem(value: name, child: Text('$name анги')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() => _classId = value);
+                  },
                 ),
-              ),
-            ],
-          );
-        },
+                const SizedBox(height: AppSpacing.gap),
+                DropdownButtonFormField<int>(
+                  initialValue: _weekday,
+                  decoration: const InputDecoration(labelText: 'Гариг'),
+                  items: [
+                    for (final day in TimetableWeekday.schoolDays)
+                      DropdownMenuItem(
+                        value: day,
+                        child: Text(TimetableWeekday.label(day)),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() => _weekday = value);
+                  },
+                ),
+                const SizedBox(height: AppSpacing.sectionSm),
+                if (periods.isEmpty)
+                  const Text(
+                    'Эхлээд Тохиргоо → Хичээлийн цаг хэсэгт цаг нэмнэ үү.',
+                  )
+                else if (entries.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(child: Text('Энэ өдөр хуваарь байхгүй')),
+                  )
+                else
+                  ...entries.map((entry) {
+                    final period = widget.store.periodById(entry.periodId);
+                    final subject = widget.store.subjectById(entry.subjectId);
+                    final teacher = widget.store.teacherForClassSubject(
+                      entry.classId,
+                      entry.subjectId,
+                    );
+                    return Card(
+                      child: ListTile(
+                        title: Text(
+                          period == null
+                              ? 'Цаг'
+                              : '${period.periodNumber}-р цаг · ${period.timeLabel}',
+                        ),
+                        subtitle: Text(
+                          [
+                            subject?.name ?? 'Хичээл',
+                            if (teacher != null) teacher.fullName,
+                          ].join(' · '),
+                        ),
+                        trailing: PopupMenuButton<String>(
+                          onSelected: (value) async {
+                            if (value == 'edit') {
+                              await _openForm(existing: entry);
+                            } else if (value == 'delete') {
+                              await _delete(entry);
+                            }
+                          },
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(value: 'edit', child: Text('Засах')),
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: Text('Устгах'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                const SizedBox(height: AppSpacing.section),
+                Text(
+                  'Багш автоматаар анги + хичээлийн оноолтоос тодорхойлогдоно.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
