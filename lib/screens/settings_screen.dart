@@ -6,6 +6,7 @@ import '../state/app_store.dart';
 import '../theme/app_spacing.dart';
 import '../widgets/admin_permission_gate.dart';
 import '../widgets/edubridge_logo.dart';
+import 'admin/data_security_screen.dart';
 import 'guardian_list_screen.dart';
 import 'lesson_periods_settings_screen.dart';
 import 'user_account_management_screen.dart';
@@ -202,6 +203,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     MaterialPageRoute(
                       builder: (context) =>
                           GuardianListScreen(store: widget.store),
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            const SizedBox(height: AppSpacing.sectionSm),
+            Card(
+              color: const Color(0xFFFFF8F8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(color: Color(0xFFE57373)),
+              ),
+              child: ListTile(
+                leading: const Icon(
+                  Icons.security_outlined,
+                  color: Color(0xFFC62828),
+                ),
+                title: const Text('Өгөгдөл ба аюулгүй байдал'),
+                subtitle: const Text('Аюултай үйлдлүүд'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          DataSecurityScreen(store: widget.store),
                     ),
                   );
                 },

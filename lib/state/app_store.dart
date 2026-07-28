@@ -731,6 +731,53 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Reloads caches after an operational school reset while keeping the admin session.
+  Future<void> reloadAfterSchoolDataReset() async {
+    final userId = _selectedDevUserId ?? _activeContext.userId;
+    final schoolId = activeSchoolId;
+    final remember = _rememberSession;
+
+    clearSchoolScopedSelections();
+    _journalSubjectByClass.clear();
+    _journalTermByClass.clear();
+    _guardianStudentId = null;
+
+    await load();
+
+    if (userId != null) {
+      final user = userById(userId);
+      if (user != null && user.isActive) {
+        _selectedDevUserId = user.id;
+        _rememberSession = remember;
+        final memberships = activeMembershipsForUser(user.id);
+        UserSchoolMembership? membership;
+        for (final item in memberships) {
+          if (schoolId != null && item.schoolId == schoolId) {
+            membership = item;
+            break;
+          }
+        }
+        if (membership == null) {
+          for (final item in memberships) {
+            if (item.role == AppRole.admin) {
+              membership = item;
+              break;
+            }
+          }
+        }
+        membership ??= memberships.isEmpty ? null : memberships.first;
+        if (membership != null) {
+          await selectSchoolMembership(membership);
+        } else {
+          _restoreActiveContext(lastSchoolId: schoolId);
+        }
+      }
+    }
+
+    clearSchoolScopedSelections();
+    notifyListeners();
+  }
+
   void _restoreActiveContext({String? lastSchoolId}) {
     final userId = _selectedDevUserId;
     if (userId == null) {
