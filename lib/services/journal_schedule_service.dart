@@ -1,6 +1,7 @@
 import '../models/lesson_occurrence.dart';
 import '../models/timetable.dart';
 import '../state/app_store.dart';
+import 'app_clock.dart';
 import 'timetable_service.dart';
 
 /// A concrete lesson slot on a calendar day (from timetable ± persisted rows).
@@ -33,9 +34,7 @@ class ScheduledJournalLesson {
 
   String get lessonDateKey {
     final day = LessonOccurrence.dateOnly(lessonDate);
-    return '${day.year.toString().padLeft(4, '0')}-'
-        '${day.month.toString().padLeft(2, '0')}-'
-        '${day.day.toString().padLeft(2, '0')}';
+    return AppClock.formatDateKey(day);
   }
 
   /// Stable occurrence identity shared by timetable slots and persisted rows.
@@ -55,11 +54,7 @@ class ScheduledJournalLesson {
 
   static String datePeriodKey(DateTime date, String periodId) {
     final day = LessonOccurrence.dateOnly(date);
-    final dateKey =
-        '${day.year.toString().padLeft(4, '0')}-'
-        '${day.month.toString().padLeft(2, '0')}-'
-        '${day.day.toString().padLeft(2, '0')}';
-    return '$dateKey|$periodId';
+    return '${AppClock.formatDateKey(day)}|$periodId';
   }
 
   ScheduledJournalLesson copyWith({
@@ -170,7 +165,7 @@ abstract final class JournalScheduleService {
     int weeksBack = 16,
     int weeksForward = 8,
   }) {
-    final center = LessonOccurrence.dateOnly(around ?? DateTime.now());
+    final center = LessonOccurrence.dateOnly(around ?? AppClock.today());
     final start = center.subtract(Duration(days: weeksBack * 7));
     final end = center.add(Duration(days: weeksForward * 7));
 
@@ -233,6 +228,9 @@ abstract final class JournalScheduleService {
   }
 
   /// Picks the default occurrence when opening the journal.
+  ///
+  /// Returns only a lesson on the Asia/Ulaanbaatar calendar day of [now].
+  /// Never opens yesterday (or any other day) as a silent fallback.
   static ScheduledJournalLesson? resolveDefault(
     AppStore store, {
     required String classId,
@@ -241,7 +239,7 @@ abstract final class JournalScheduleService {
     DateTime? now,
     String? preferredPeriodId,
   }) {
-    final moment = now ?? DateTime.now();
+    final moment = now ?? AppClock.nowInUlaanbaatar();
     final today = LessonOccurrence.dateOnly(moment);
     final todayLessons = lessonsOnDate(
       store,
@@ -251,45 +249,14 @@ abstract final class JournalScheduleService {
       teacherId: teacherId,
     );
 
-    if (todayLessons.isNotEmpty) {
-      if (preferredPeriodId != null) {
-        for (final lesson in todayLessons) {
-          if (lesson.periodId == preferredPeriodId) return lesson;
-        }
-      }
-      return pickCurrentOrFirst(todayLessons, moment);
-    }
+    if (todayLessons.isEmpty) return null;
 
-    final timeline = buildTimeline(
-      store,
-      classId: classId,
-      subjectId: subjectId,
-      teacherId: teacherId,
-      around: today,
-    );
-    if (timeline.isEmpty) return null;
-
-    // Prefer nearest previous occurrence that already has a persisted journal.
-    ScheduledJournalLesson? previousWithEntry;
-    ScheduledJournalLesson? previousAny;
-    ScheduledJournalLesson? nextAny;
-    for (final lesson in timeline) {
-      if (lesson.lessonDate.isBefore(today) ||
-          (lesson.lessonDate == today &&
-              lesson.periodNumber < _roughPeriodNow(moment))) {
-        previousAny = lesson;
-        final existing = store.findLessonOccurrence(
-          classId: classId,
-          subjectId: subjectId,
-          lessonDate: lesson.lessonDate,
-          periodId: lesson.periodId,
-        );
-        if (existing != null) previousWithEntry = lesson;
-      } else if (lesson.lessonDate.isAfter(today) && nextAny == null) {
-        nextAny = lesson;
+    if (preferredPeriodId != null) {
+      for (final lesson in todayLessons) {
+        if (lesson.periodId == preferredPeriodId) return lesson;
       }
     }
-    return previousWithEntry ?? previousAny ?? nextAny ?? timeline.last;
+    return pickCurrentOrFirst(todayLessons, moment);
   }
 
   static ScheduledJournalLesson pickCurrentOrFirst(
@@ -315,7 +282,10 @@ abstract final class JournalScheduleService {
     return current ?? upcoming ?? todayLessons.first;
   }
 
-  static int _roughPeriodNow(DateTime now) => now.hour;
+  static String mongolianDateLabel(DateTime date) {
+    final weekday = TimetableWeekday.labels[date.weekday] ?? '';
+    return '${AppClock.mongolianLabel(date)}, $weekday';
+  }
 
   static int? _parseMinutes(String hhmm) {
     final parts = hhmm.split(':');
@@ -324,10 +294,5 @@ abstract final class JournalScheduleService {
     final m = int.tryParse(parts[1]);
     if (h == null || m == null) return null;
     return h * 60 + m;
-  }
-
-  static String mongolianDateLabel(DateTime date) {
-    final weekday = TimetableWeekday.labels[date.weekday] ?? '';
-    return '${date.year} оны ${date.month} сарын ${date.day}, $weekday';
   }
 }

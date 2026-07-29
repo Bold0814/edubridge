@@ -76,6 +76,8 @@ class EduBridgeRepository {
       'name': schoolClass.id,
       'homeroom_teacher_id': schoolClass.homeroomTeacherId,
       'school_id': schoolClass.schoolId,
+      'grade_level': schoolClass.gradeLevel,
+      'section': schoolClass.section,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -93,12 +95,25 @@ class EduBridgeRepository {
 
   SchoolClass _schoolClassFromRow(Map<String, Object?> row) {
     final name = row['name']! as String;
-    return SchoolClass(
+    final gradeRaw = row['grade_level'];
+    final gradeLevel = gradeRaw is int
+        ? gradeRaw
+        : int.tryParse(gradeRaw?.toString() ?? '');
+    final sectionRaw = row['section'] as String?;
+    var schoolClass = SchoolClass(
       id: name,
       name: name,
       schoolId: row['school_id'] as String? ?? DatabaseService.defaultSchoolId,
       homeroomTeacherId: row['homeroom_teacher_id'] as String?,
+      gradeLevel: gradeLevel,
+      section: sectionRaw?.trim().isEmpty == true
+          ? null
+          : sectionRaw?.trim().toLowerCase(),
     );
+    if (schoolClass.gradeLevel == null) {
+      schoolClass = schoolClass.withParsedNaming();
+    }
+    return schoolClass;
   }
 
   // --- Schools ---
@@ -1092,6 +1107,7 @@ class EduBridgeRepository {
     'phone': teacher.phone,
     'email': teacher.email,
     'is_active': teacher.isActive ? 1 : 0,
+    'auth_uid': teacher.authUid,
   };
 
   Teacher _teacherFromRow(Map<String, Object?> row) {
@@ -1102,6 +1118,7 @@ class EduBridgeRepository {
       phone: row['phone'] as String? ?? '',
       email: row['email'] as String? ?? '',
       isActive: (row['is_active'] as int?) != 0,
+      authUid: row['auth_uid'] as String?,
     );
   }
 
@@ -1399,9 +1416,21 @@ class EduBridgeRepository {
     String? entriesJson;
     if (record.entries != null) {
       entriesJson = encodeAttendanceEntries(
-        record.entries!
-            .map((e) => {'studentName': e.studentName, 'status': e.status.name})
-            .toList(),
+        record.entries!.map((e) {
+          final map = <String, String>{
+            'studentName': e.studentName,
+            'status': e.status.name,
+          };
+          final studentId = e.studentId;
+          if (studentId != null && studentId.isNotEmpty) {
+            map['studentId'] = studentId;
+          }
+          final note = e.normalizedNote;
+          if (note != null) {
+            map['note'] = note;
+          }
+          return map;
+        }).toList(),
       );
     }
 
@@ -1414,6 +1443,14 @@ class EduBridgeRepository {
       'absent_count': record.absentCount,
       'entries_json': entriesJson,
       'legacy_status': record.status?.name,
+      'date_key': record.dateKey,
+      'school_id': record.schoolId,
+      'recorded_at': record.recordedAt?.toIso8601String(),
+      'subject_id': record.subjectId,
+      'recorded_by_teacher_id': record.recordedByTeacherId,
+      'note': record.note,
+      'created_by_uid': record.createdByUid,
+      'updated_by_uid': record.updatedByUid,
     };
   }
 
@@ -1423,13 +1460,20 @@ class EduBridgeRepository {
         .map(
           (e) => StudentAttendanceEntry(
             studentName: e['studentName']?.toString() ?? '',
+            studentId: e['studentId']?.toString(),
             status: _attendanceStatusFrom(e['status']?.toString()),
+            note: e['note']?.toString(),
           ),
         )
         .where((e) => e.studentName.isNotEmpty)
         .toList();
 
     final legacy = row['legacy_status'] as String?;
+    final recordedRaw = row['recorded_at'] as String?;
+    DateTime? recordedAt;
+    if (recordedRaw != null && recordedRaw.isNotEmpty) {
+      recordedAt = DateTime.tryParse(recordedRaw);
+    }
 
     return AttendanceRecord(
       id: row['id']! as String,
@@ -1440,6 +1484,14 @@ class EduBridgeRepository {
       absentCount: row['absent_count']! as int,
       entries: entries.isEmpty ? null : List.unmodifiable(entries),
       status: legacy == null ? null : _attendanceStatusFrom(legacy),
+      dateKey: row['date_key'] as String?,
+      schoolId: row['school_id'] as String?,
+      recordedAt: recordedAt,
+      subjectId: row['subject_id'] as int?,
+      recordedByTeacherId: row['recorded_by_teacher_id'] as String?,
+      note: row['note'] as String?,
+      createdByUid: row['created_by_uid'] as String?,
+      updatedByUid: row['updated_by_uid'] as String?,
     );
   }
 
@@ -1463,6 +1515,9 @@ class EduBridgeRepository {
     'score': grade.score,
     'term': grade.term,
     'letter_grade': grade.letterGrade,
+    'grade_date': grade.gradeDate,
+    'created_by_uid': grade.createdByUid,
+    'updated_by_uid': grade.updatedByUid,
   };
 
   Grade _gradeFromRow(Map<String, Object?> row) {
@@ -1475,6 +1530,9 @@ class EduBridgeRepository {
       score: row['score']! as String,
       term: row['term']! as String,
       letterGrade: row['letter_grade'] as String?,
+      gradeDate: row['grade_date'] as String?,
+      createdByUid: row['created_by_uid'] as String?,
+      updatedByUid: row['updated_by_uid'] as String?,
     );
   }
 
@@ -1486,6 +1544,13 @@ class EduBridgeRepository {
     'description': homework.description,
     'due_date': homework.dueDate,
     'status': homework.status.storageValue,
+    'school_id': homework.schoolId,
+    'subject_id': homework.subjectId,
+    'created_by_uid': homework.createdByUid,
+    'created_by_teacher_id': homework.createdByTeacherId,
+    'created_at': homework.createdAt,
+    'updated_at': homework.updatedAt,
+    'updated_by_uid': homework.updatedByUid,
   };
 
   Homework _homeworkFromRow(Map<String, Object?> row) {
@@ -1497,6 +1562,13 @@ class EduBridgeRepository {
       description: row['description']! as String,
       dueDate: row['due_date']! as String,
       status: HomeworkStatus.fromStorage(row['status']! as String),
+      schoolId: row['school_id'] as String?,
+      subjectId: row['subject_id'] as int?,
+      createdByUid: row['created_by_uid'] as String?,
+      createdByTeacherId: row['created_by_teacher_id'] as String?,
+      createdAt: row['created_at'] as String?,
+      updatedAt: row['updated_at'] as String?,
+      updatedByUid: row['updated_by_uid'] as String?,
     );
   }
 
@@ -1508,6 +1580,11 @@ class EduBridgeRepository {
     'body': item.body,
     'date': item.date,
     'is_featured': item.isFeatured ? 1 : 0,
+    'created_by_uid': item.createdByUid,
+    'created_by_teacher_id': item.createdByTeacherId,
+    'created_at': item.createdAt,
+    'updated_at': item.updatedAt,
+    'updated_by_uid': item.updatedByUid,
   };
 
   Announcement _announcementFromRow(Map<String, Object?> row) {
@@ -1519,6 +1596,11 @@ class EduBridgeRepository {
       body: row['body']! as String,
       date: row['date']! as String,
       isFeatured: (row['is_featured'] as int?) == 1,
+      createdByUid: row['created_by_uid'] as String?,
+      createdByTeacherId: row['created_by_teacher_id'] as String?,
+      createdAt: row['created_at'] as String?,
+      updatedAt: row['updated_at'] as String?,
+      updatedByUid: row['updated_by_uid'] as String?,
     );
   }
 
@@ -1533,6 +1615,11 @@ class EduBridgeRepository {
     'priority': note.priority.storageValue,
     'is_visible_to_guardian': note.isVisibleToGuardian ? 1 : 0,
     'is_visible_to_student': note.isVisibleToStudent ? 1 : 0,
+    'school_id': note.schoolId,
+    'class_id': note.classId,
+    'created_by_uid': note.createdByUid,
+    'updated_at': note.updatedAt,
+    'updated_by_uid': note.updatedByUid,
   };
 
   TeacherNote _teacherNoteFromRow(Map<String, Object?> row) {
@@ -1547,6 +1634,11 @@ class EduBridgeRepository {
       priority: NotePriority.fromStorage(row['priority']! as String),
       isVisibleToGuardian: (row['is_visible_to_guardian'] as int?) == 1,
       isVisibleToStudent: (row['is_visible_to_student'] as int?) == 1,
+      schoolId: row['school_id'] as String?,
+      classId: row['class_id'] as String?,
+      createdByUid: row['created_by_uid'] as String?,
+      updatedAt: row['updated_at'] as String?,
+      updatedByUid: row['updated_by_uid'] as String?,
     );
   }
 

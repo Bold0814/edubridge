@@ -5,6 +5,7 @@ import 'package:edubridge/repositories/edubridge_repository.dart';
 import 'package:edubridge/screens/student_detail_screen.dart';
 import 'package:edubridge/screens/student_grade_detail_screen.dart';
 import 'package:edubridge/services/database_service.dart';
+import 'package:edubridge/services/grade_average_calculator.dart';
 import 'package:edubridge/state/app_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -290,16 +291,23 @@ void main() {
     await tester.pump();
     expect(find.text('Дүн бүртгээгүй байна'), findsNothing);
     expect(find.text('Энэ хичээл, улиралд дүн бүртгээгүй байна'), findsNothing);
+    expect(
+      find.text(GradeAverageCalculator.emptySubjectHistoryMessage),
+      findsNothing,
+    );
 
     await tester.pumpAndSettle();
     expect(find.byType(StudentGradeDetailScreen), findsOneWidget);
     expect(
-      find.textContaining('Амар Ану · GfМонгол · 1-р улирал'),
+      find.textContaining('GfМонгол · 1-р улирал'),
       findsOneWidget,
     );
     expect(find.text('79 (C+)'), findsOneWidget);
     expect(find.text('Дүн бүртгээгүй байна'), findsNothing);
-    expect(find.text('Энэ хичээл, улиралд дүн бүртгээгүй байна'), findsNothing);
+    expect(
+      find.text(GradeAverageCalculator.emptySubjectHistoryMessage),
+      findsNothing,
+    );
   });
 
   testWidgets('empty state only when filtered result is truly empty', (
@@ -329,7 +337,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Энэ хичээл, улиралд дүн бүртгээгүй байна'),
+      find.text(GradeAverageCalculator.emptySubjectHistoryMessage),
       findsOneWidget,
     );
     expect(find.text('90 (A)'), findsNothing);

@@ -28,10 +28,52 @@ void main() {
     await database.close();
   });
 
-  testWidgets('login screen shows create school action', (tester) async {
+  testWidgets('login screen shows school registration request action', (
+    tester,
+  ) async {
     await tester.pumpWidget(MaterialApp(home: LoginScreen(store: store)));
-    expect(find.text('Шинэ сургууль үүсгэх'), findsOneWidget);
+    expect(find.text('Сургууль бүртгүүлэх хүсэлт'), findsOneWidget);
+    expect(find.text('Шинэ сургууль үүсгэх'), findsNothing);
     expect(find.text('Нэвтрэх'), findsOneWidget);
+  });
+
+  testWidgets('public registration request does not open CreateSchoolScreen', (
+    tester,
+  ) async {
+    await tester.pumpWidget(MaterialApp(home: LoginScreen(store: store)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Сургууль бүртгүүлэх хүсэлт'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CreateSchoolScreen), findsNothing);
+    expect(find.text('Сургууль бүртгүүлэх хүсэлт'), findsWidgets);
+    expect(
+      find.textContaining('EduBridge-ийн зөвшөөрөл шаардлагатай'),
+      findsOneWidget,
+    );
+    expect(find.text('Ойлголоо'), findsOneWidget);
+
+    await tester.tap(find.text('Ойлголоо'));
+    await tester.pumpAndSettle();
+    expect(find.byType(LoginScreen), findsOneWidget);
+    expect(find.byType(CreateSchoolScreen), findsNothing);
+  });
+
+  testWidgets('debug mode may open test school creation', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(MaterialApp(home: LoginScreen(store: store)));
+    await tester.pumpAndSettle();
+
+    // flutter_test runs with kDebugMode == true.
+    expect(find.text('Туршилтын сургууль үүсгэх'), findsOneWidget);
+    await tester.ensureVisible(find.text('Туршилтын сургууль үүсгэх'));
+    await tester.tap(find.text('Туршилтын сургууль үүсгэх'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CreateSchoolScreen), findsOneWidget);
   });
 
   test('school name validation rejects whitespace', () async {

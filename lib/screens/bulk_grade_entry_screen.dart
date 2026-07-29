@@ -1,8 +1,11 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/grade.dart';
 import '../models/school_settings.dart';
 import '../models/student.dart';
+import '../services/grade_write_authorization.dart';
 import '../state/app_store.dart';
 import '../theme/app_colors.dart';
 import 'student_list_screen.dart';
@@ -43,6 +46,8 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
   final _formKey = GlobalKey<FormState>();
   final Map<String, TextEditingController> _scoreControllers = {};
   final Map<String, String?> _letterPreviews = {};
+  final Map<String, String> _initialScores = {};
+  final Map<String, String> _existingGradeIds = {};
 
   String? _selectedSubject;
   String? _selectedTerm;
@@ -50,18 +55,64 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
 
   List<Student> get _students => widget.store.studentsFor(widget.selectedClass);
 
+  int? get _subjectId {
+    final name = _selectedSubject?.trim();
+    if (name == null || name.isEmpty) return null;
+    return widget.store.subjectByName(name)?.id;
+  }
+
+  GradePermissionResult get _permission {
+    final subjectId = _subjectId;
+    if (subjectId == null) {
+      return const GradePermissionResult.denied(
+        GradePermissionResult.subjectMissing,
+      );
+    }
+    return widget.store.canTeacherManageGrades(
+      classId: widget.selectedClass,
+      subjectId: subjectId,
+    );
+  }
+
+  bool get _hasValidChangedScore {
+    for (final student in _students) {
+      final text = _scoreControllers[student.id]?.text.trim() ?? '';
+      if (text.isEmpty) continue;
+      final score = num.tryParse(text);
+      if (score == null || score < 0 || score > 100) continue;
+      final initial = _initialScores[student.id] ?? '';
+      if (text != initial) return true;
+    }
+    return false;
+  }
+
+  bool get _canSubmit {
+    if (_isSaving) return false;
+    if (!_permission.allowed) return false;
+    if (_selectedSubject == null || _selectedSubject!.trim().isEmpty) {
+      return false;
+    }
+    if (_selectedTerm == null || _selectedTerm!.trim().isEmpty) return false;
+    return _hasValidChangedScore;
+  }
+
   @override
   void initState() {
     super.initState();
     final subject = widget.initialSubject;
-    if (subject != null && _subjects.contains(subject)) {
+    if (subject != null &&
+        (_subjects.contains(subject) ||
+            widget.store.hasAdminPermissionForActiveSchool)) {
       _selectedSubject = subject;
+    } else if (_subjects.length == 1) {
+      _selectedSubject = _subjects.first;
     }
     final term = widget.initialTerm;
     if (term != null && _terms.contains(term)) {
       _selectedTerm = term;
     }
     _syncControllers(_students);
+    _preloadExistingScores();
   }
 
   @override
@@ -70,6 +121,30 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
       controller.dispose();
     }
     super.dispose();
+  }
+
+  void _preloadExistingScores() {
+    final subject = _selectedSubject;
+    final term = _selectedTerm;
+    if (subject == null || term == null) return;
+    for (final student in _students) {
+      final grades = widget.store.gradesForStudentContext(
+        className: widget.selectedClass,
+        studentId: student.id,
+        subjectName: subject,
+        term: term,
+      );
+      if (grades.isEmpty) continue;
+      final existing = grades.first;
+      final score = existing.score;
+      _initialScores[student.id] = score;
+      _existingGradeIds[student.id] = existing.id;
+      final controller = _scoreControllers[student.id];
+      if (controller != null && controller.text.isEmpty) {
+        controller.text = score;
+        _letterPreviews[student.id] = Grade.tryLetterFromScoreText(score);
+      }
+    }
   }
 
   void _syncControllers(List<Student> students) {
@@ -82,7 +157,10 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
     for (final student in students) {
       _scoreControllers.putIfAbsent(student.id, () {
         final controller = TextEditingController();
-        controller.addListener(() => _updateLetterPreview(student.id));
+        controller.addListener(() {
+          _updateLetterPreview(student.id);
+          if (mounted) setState(() {});
+        });
         return controller;
       });
     }
@@ -95,6 +173,8 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
         if (ids.contains(id)) continue;
         _scoreControllers.remove(id)?.dispose();
         _letterPreviews.remove(id);
+        _initialScores.remove(id);
+        _existingGradeIds.remove(id);
       }
     });
   }
@@ -123,39 +203,89 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
     setState(() => _syncControllers(_students));
   }
 
+  void _showError(String message, {String? debugDetail}) {
+    final text = (kDebugMode && debugDetail != null && debugDetail.isNotEmpty)
+        ? '$message\n($debugDetail)'
+        : message;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
   Future<void> _save() async {
-    if (_isSaving) return;
+    if (_isSaving || !_canSubmit) return;
     if (!_formKey.currentState!.validate()) return;
+
+    final permission = _permission;
+    if (!permission.allowed) {
+      _showError(
+        'Дүн хадгалах эрхийн тохиргоо таарахгүй байна.',
+        debugDetail: permission.debugLabel,
+      );
+      return;
+    }
 
     final students = _students;
     if (students.isEmpty) return;
 
-    final grades = <Grade>[];
+    final drafts = <({Grade grade, bool isUpdate})>[];
     for (final student in students) {
       final scoreText = _scoreControllers[student.id]!.text.trim();
-      final score = num.parse(scoreText);
-      grades.add(
-        Grade(
-          id: widget.store.nextGradeId(),
+      if (scoreText.isEmpty) continue;
+      final score = num.tryParse(scoreText);
+      if (score == null || score < 0 || score > 100) continue;
+      final initial = _initialScores[student.id] ?? '';
+      if (scoreText == initial) continue;
+
+      final existingId = _existingGradeIds[student.id];
+      drafts.add((
+        grade: Grade(
+          id: existingId ?? widget.store.nextGradeId(),
           className: widget.selectedClass,
           studentId: student.id,
           studentName: student.fullName,
           subject: _selectedSubject!,
+          subjectId: _subjectId,
           score: scoreText,
           term: _selectedTerm!,
+          termId: _selectedTerm!,
           letterGrade: Grade.letterFromScore(score),
         ),
-      );
+        isUpdate: existingId != null,
+      ));
+    }
+
+    if (drafts.isEmpty) {
+      _showError('Хадгалах өөрчлөгдсөн дүн алга.');
+      return;
     }
 
     setState(() => _isSaving = true);
-    await widget.store.addGrades(grades);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Ангийн дүн амжилттай хадгалагдлаа')),
-    );
-    Navigator.pop(context);
+    try {
+      for (final draft in drafts) {
+        await widget.store.saveGrade(draft.grade, isUpdate: draft.isUpdate);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ангийн дүн амжилттай хадгалагдлаа')),
+      );
+      Navigator.pop(context);
+    } on PermissionDeniedException catch (e) {
+      if (!mounted) return;
+      _showError(e.message);
+    } on GradeSaveException catch (e) {
+      if (!mounted) return;
+      _showError(e.message, debugDetail: e.debugCode);
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      _showError(
+        Grade.permissionDeniedMessage,
+        debugDetail: e.code,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showError(Grade.genericSaveFailedMessage);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -210,11 +340,19 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
                                     ),
                                   )
                                   .toList(),
-                              onChanged: (value) {
-                                setState(() => _selectedSubject = value);
-                              },
+                              onChanged: _isSaving
+                                  ? null
+                                  : (value) {
+                                      setState(() {
+                                        _selectedSubject = value;
+                                        _initialScores.clear();
+                                        _existingGradeIds.clear();
+                                        _preloadExistingScores();
+                                      });
+                                    },
                               validator: (value) {
-                                if (value == null || value.isEmpty) {
+                                final selected = value ?? _selectedSubject;
+                                if (selected == null || selected.isEmpty) {
                                   return 'Хичээлээ сонгоно уу';
                                 }
                                 return null;
@@ -241,11 +379,19 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
                                     ),
                                   )
                                   .toList(),
-                              onChanged: (value) {
-                                setState(() => _selectedTerm = value);
-                              },
+                              onChanged: _isSaving
+                                  ? null
+                                  : (value) {
+                                      setState(() {
+                                        _selectedTerm = value;
+                                        _initialScores.clear();
+                                        _existingGradeIds.clear();
+                                        _preloadExistingScores();
+                                      });
+                                    },
                               validator: (value) {
-                                if (value == null || value.isEmpty) {
+                                final selected = value ?? _selectedTerm;
+                                if (selected == null || selected.isEmpty) {
                                   return 'Улирлаа сонгоно уу';
                                 }
                                 return null;
@@ -288,6 +434,7 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
                                       flex: 2,
                                       child: TextFormField(
                                         controller: controller,
+                                        enabled: !_isSaving,
                                         keyboardType: TextInputType.number,
                                         textAlign: TextAlign.center,
                                         decoration: const InputDecoration(
@@ -296,13 +443,9 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
                                           isDense: true,
                                         ),
                                         validator: (value) {
-                                          if (value == null ||
-                                              value.trim().isEmpty) {
-                                            return 'Дүн оруулна уу';
-                                          }
-                                          final score = num.tryParse(
-                                            value.trim(),
-                                          );
+                                          final text = value?.trim() ?? '';
+                                          if (text.isEmpty) return null;
+                                          final score = num.tryParse(text);
                                           if (score == null ||
                                               score < 0 ||
                                               score > 100) {
@@ -344,11 +487,19 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                         child: FilledButton(
-                          onPressed: _isSaving ? null : _save,
+                          onPressed: _canSubmit ? _save : null,
                           style: FilledButton.styleFrom(
                             minimumSize: const Size.fromHeight(52),
                           ),
-                          child: const Text('Бүх дүнг хадгалах'),
+                          child: _isSaving
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('Бүх дүнг хадгалах'),
                         ),
                       ),
                     ),

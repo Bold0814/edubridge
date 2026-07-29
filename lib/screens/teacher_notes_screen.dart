@@ -39,13 +39,33 @@ class TeacherNotesScreen extends StatelessWidget {
     String action,
   ) async {
     if (action == 'edit') {
+      if (!store.canEditAdvice(item, classId: selectedClass)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordOwnOnlyMessage)),
+        );
+        return;
+      }
       await _openForm(context, existing: item);
       return;
     }
     if (action == 'delete') {
+      if (!store.canDeleteAdvice(item, classId: selectedClass)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordDeleteDeniedMessage)),
+        );
+        return;
+      }
       final ok = await confirmDelete(context);
       if (!ok) return;
-      await store.deleteTeacherNote(item.id);
+      try {
+        await store.deleteTeacherNote(item.id);
+      } on PermissionDeniedException catch (e) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+        return;
+      }
       if (!context.mounted) return;
       showDeletedSnackBar(context);
     }
@@ -87,14 +107,28 @@ class TeacherNotesScreen extends StatelessWidget {
                 ...notes.map((item) {
                   final student = store.studentById(item.studentId);
                   final teacher = store.teacherById(item.teacherId);
+                  final canEdit = store.canEditAdvice(
+                    item,
+                    classId: selectedClass,
+                  );
+                  final canDelete = store.canDeleteAdvice(
+                    item,
+                    classId: selectedClass,
+                  );
                   return Card(
                     child: InkWell(
                       borderRadius: BorderRadius.circular(AppSpacing.radius),
-                      onLongPress: () async {
-                        final action = await showEditDeleteMenu(context);
-                        if (action == null || !context.mounted) return;
-                        await _onMenuSelected(context, item, action);
-                      },
+                      onLongPress: (canEdit || canDelete)
+                          ? () async {
+                              final action = await showEditDeleteMenu(
+                                context,
+                                canEdit: canEdit,
+                                canDelete: canDelete,
+                              );
+                              if (action == null || !context.mounted) return;
+                              await _onMenuSelected(context, item, action);
+                            }
+                          : null,
                       child: Padding(
                         padding: const EdgeInsets.all(AppSpacing.card),
                         child: Row(
@@ -133,21 +167,24 @@ class TeacherNotesScreen extends StatelessWidget {
                                 ],
                               ),
                             ),
-                            PopupMenuButton<String>(
-                              tooltip: 'Цэс',
-                              onSelected: (value) =>
-                                  _onMenuSelected(context, item, value),
-                              itemBuilder: (context) => const [
-                                PopupMenuItem(
-                                  value: 'edit',
-                                  child: Text('✏️ Засах'),
-                                ),
-                                PopupMenuItem(
-                                  value: 'delete',
-                                  child: Text('🗑 Устгах'),
-                                ),
-                              ],
-                            ),
+                            if (canEdit || canDelete)
+                              PopupMenuButton<String>(
+                                tooltip: 'Цэс',
+                                onSelected: (value) =>
+                                    _onMenuSelected(context, item, value),
+                                itemBuilder: (context) => [
+                                  if (canEdit)
+                                    const PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text('✏️ Засах'),
+                                    ),
+                                  if (canDelete)
+                                    const PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text('🗑 Устгах'),
+                                    ),
+                                ],
+                              ),
                           ],
                         ),
                       ),

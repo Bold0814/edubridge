@@ -12,6 +12,7 @@ import '../../widgets/session_menu_button.dart';
 import '../teacher_notes_screen.dart';
 import '../timetable_viewer_screen.dart';
 import 'guardian_announcements_screen.dart';
+import 'guardian_attendance_history_screen.dart';
 import 'guardian_attendance_screen.dart';
 import 'guardian_grades_screen.dart';
 import 'guardian_homework_screen.dart';
@@ -111,8 +112,8 @@ class GuardianHomeScreen extends StatelessWidget {
                         data: GuardianTimeline.fromStore(store, selected).data,
                         showAttendanceStats: true,
                         showUnreadAnnouncements: true,
-                        onAttendanceTap: () {
-                          Navigator.push(
+                        onAttendanceTap: () async {
+                          await Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (context) => GuardianAttendanceScreen(
@@ -121,6 +122,7 @@ class GuardianHomeScreen extends StatelessWidget {
                               ),
                             ),
                           );
+                          store.refreshCalendarBoundViews();
                         },
                         onGradesTap: () {
                           Navigator.push(
@@ -184,17 +186,18 @@ class GuardianHomeScreen extends StatelessWidget {
                                 title: 'Ирц',
                                 icon: Icons.fact_check_outlined,
                                 color: AppColors.present,
-                                onTap: () {
-                                  Navigator.push(
+                                onTap: () async {
+                                  await Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                       builder: (context) =>
-                                          GuardianAttendanceScreen(
+                                          GuardianAttendanceHistoryScreen(
                                             store: store,
                                             student: selected,
                                           ),
                                     ),
                                   );
+                                  store.refreshCalendarBoundViews();
                                 },
                               ),
                               _ModuleCard(

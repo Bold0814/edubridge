@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/announcement.dart';
+import '../services/app_clock.dart';
 import '../state/app_store.dart';
 import '../theme/app_spacing.dart';
 
@@ -40,7 +41,7 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
     _titleController = TextEditingController(text: existing?.title ?? '');
     _bodyController = TextEditingController(text: existing?.body ?? '');
     _isFeatured = existing?.isFeatured ?? false;
-    _selectedDate = _parseExistingDate(existing?.date) ?? DateTime.now();
+    _selectedDate = _parseExistingDate(existing?.date) ?? AppClock.today();
     _dateController = TextEditingController(
       text: existing?.date.trim().isNotEmpty == true
           ? existing!.date
@@ -70,11 +71,11 @@ class _AnnouncementCreateScreenState extends State<AnnouncementCreateScreen> {
   }
 
   String _formatMongolianDate(DateTime date) {
-    return '${date.year} оны ${date.month} сарын ${date.day}';
+    return AppClock.mongolianLabel(date);
   }
 
   Future<void> _pickDate() async {
-    final now = DateTime.now();
+    final now = AppClock.today();
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,

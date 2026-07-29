@@ -1,3 +1,5 @@
+import '../services/app_clock.dart';
+
 /// One scheduled lesson occurrence used by the class journal.
 ///
 /// Identity: school + class + subject + date + period (teacher is a snapshot).
@@ -30,10 +32,7 @@ class LessonOccurrence {
   final String? note;
   final DateTime createdAt;
 
-  String get lessonDateKey =>
-      '${lessonDate.year.toString().padLeft(4, '0')}-'
-      '${lessonDate.month.toString().padLeft(2, '0')}-'
-      '${lessonDate.day.toString().padLeft(2, '0')}';
+  String get lessonDateKey => AppClock.formatDateKey(lessonDate);
 
   LessonOccurrence copyWith({
     String? teacherId,

@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 
 /// Edit / delete actions shown from `...` menu or long-press.
-Future<String?> showEditDeleteMenu(BuildContext context) {
+Future<String?> showEditDeleteMenu(
+  BuildContext context, {
+  bool canEdit = true,
+  bool canDelete = true,
+}) {
+  if (!canEdit && !canDelete) return Future.value(null);
   return showModalBottomSheet<String>(
     context: context,
     showDragHandle: true,
@@ -10,14 +15,16 @@ Future<String?> showEditDeleteMenu(BuildContext context) {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              title: const Text('✏️ Засах'),
-              onTap: () => Navigator.pop(context, 'edit'),
-            ),
-            ListTile(
-              title: const Text('🗑 Устгах'),
-              onTap: () => Navigator.pop(context, 'delete'),
-            ),
+            if (canEdit)
+              ListTile(
+                title: const Text('✏️ Засах'),
+                onTap: () => Navigator.pop(context, 'edit'),
+              ),
+            if (canDelete)
+              ListTile(
+                title: const Text('🗑 Устгах'),
+                onTap: () => Navigator.pop(context, 'delete'),
+              ),
           ],
         ),
       );

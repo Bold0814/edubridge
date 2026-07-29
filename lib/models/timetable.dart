@@ -10,11 +10,20 @@ class LessonPeriod {
 
   final String id;
   final String schoolId;
+
+  /// Saved period order (1-based). Never invent from list index.
   final int periodNumber;
   final String startTime;
   final String endTime;
 
-  String get timeLabel => '$startTime – $endTime';
+  /// `08:00–08:40`
+  String get timeLabel => '$startTime–$endTime';
+
+  /// `1-р цаг` (period ordinal, not duration).
+  String get periodOrdinalLabel => '$periodNumber-р цаг';
+
+  /// `08:00–08:40 · 1-р цаг`
+  String get scheduleHeading => '$timeLabel · $periodOrdinalLabel';
 
   LessonPeriod copyWith({
     String? schoolId,

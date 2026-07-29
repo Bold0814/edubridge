@@ -168,7 +168,7 @@ void main() {
     expect(beforeFirst?.periodId, period1Id);
   });
 
-  test('no lesson today falls back and callers can show message', () async {
+  test('no lesson today does not open yesterday', () async {
     await scheduleOnWeekday(DateTime.monday, [period2Id]);
 
     final monday = DateTime(2026, 7, 20);
@@ -189,8 +189,7 @@ void main() {
       now: fridayNow,
     );
 
-    expect(resolved, isNotNull);
-    expect(resolved!.lessonDate, monday);
+    expect(resolved, isNull);
     expect(
       JournalScheduleService.lessonsOnDate(
         store,

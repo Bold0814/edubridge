@@ -1,0 +1,226 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function membershipPath(schoolId) {
+      return /databases/$(database)/documents/school_memberships/$(schoolId + '_' + request.auth.uid);
+    }
+
+    function membershipDoc(schoolId) {
+      return get(membershipPath(schoolId));
+    }
+
+    function hasActiveMembership(schoolId) {
+      return signedIn()
+        && exists(membershipPath(schoolId))
+        && membershipDoc(schoolId).data.uid == request.auth.uid
+        && membershipDoc(schoolId).data.schoolId == schoolId
+        && membershipDoc(schoolId).data.status == 'active';
+    }
+
+    function isSchoolAdmin(schoolId) {
+      return hasActiveMembership(schoolId)
+        && membershipDoc(schoolId).data.role == 'schoolAdmin';
+    }
+
+    function isSchoolTeacher(schoolId) {
+      return hasActiveMembership(schoolId)
+        && membershipDoc(schoolId).data.role == 'teacher';
+    }
+
+    function teacherPath(teacherId) {
+      return /databases/$(database)/documents/teachers/$(teacherId);
+    }
+
+    function teacherDoc(teacherId) {
+      return get(teacherPath(teacherId));
+    }
+
+    // Canonical Firebase Auth link field on teachers/{teacherId}: authUid
+    function teacherAuthMatches(teacherId) {
+      return exists(teacherPath(teacherId))
+        && teacherDoc(teacherId).data.authUid == request.auth.uid
+        && teacherDoc(teacherId).data.schoolId is string;
+    }
+
+    function assignmentPath(schoolId, classId, subjectId) {
+      return /databases/$(database)/documents/class_subject_teachers/$(schoolId + '_' + classId + '_' + subjectId);
+    }
+
+    function assignmentDoc(schoolId, classId, subjectId) {
+      return get(assignmentPath(schoolId, classId, subjectId));
+    }
+
+    // Validates assignment from Firestore docs — does not trust only
+    // request.resource.data.teacherId. The authenticated user must be linked
+    // via teachers/{teacherId}.authUid == request.auth.uid, and that same
+    // teacher document id must be on the class_subject_teachers assignment.
+    function isAssignedSubjectTeacher(schoolId, classId, subjectId, teacherId) {
+      return exists(assignmentPath(schoolId, classId, subjectId))
+        && assignmentDoc(schoolId, classId, subjectId).data.schoolId == schoolId
+        && assignmentDoc(schoolId, classId, subjectId).data.classId == classId
+        && assignmentDoc(schoolId, classId, subjectId).data.subjectId == subjectId
+        && assignmentDoc(schoolId, classId, subjectId).data.teacherId == teacherId
+        && teacherAuthMatches(teacherId)
+        && teacherDoc(teacherId).data.schoolId == schoolId;
+    }
+
+    function gradeHasRequiredFields() {
+      return request.resource.data.keys().hasAll([
+          'id', 'schoolId', 'classId', 'studentId', 'subjectId',
+          'teacherId', 'termId', 'score', 'letterGrade', 'gradeType',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.schoolId is string
+        && request.resource.data.schoolId.size() > 0
+        && request.resource.data.classId is string
+        && request.resource.data.classId.size() > 0
+        && request.resource.data.studentId is string
+        && request.resource.data.studentId.size() > 0
+        && request.resource.data.teacherId is string
+        && request.resource.data.teacherId.size() > 0
+        && request.resource.data.termId is string
+        && request.resource.data.termId.size() > 0;
+    }
+
+    function gradeCreateAuthorized() {
+      return signedIn()
+        && gradeHasRequiredFields()
+        && (
+          isSchoolAdmin(request.resource.data.schoolId)
+          || (
+            isSchoolTeacher(request.resource.data.schoolId)
+            && isAssignedSubjectTeacher(
+              request.resource.data.schoolId,
+              request.resource.data.classId,
+              request.resource.data.subjectId,
+              request.resource.data.teacherId
+            )
+            && (
+              !('createdByUid' in request.resource.data)
+              || request.resource.data.createdByUid == null
+              || request.resource.data.createdByUid == request.auth.uid
+            )
+          )
+        );
+    }
+
+    // Teacher update/delete requires createdByUid ownership.
+    // Legacy grades without createdByUid: school admin only.
+    function gradeOwnedByCaller() {
+      return resource.data.keys().hasAny(['createdByUid'])
+        && resource.data.createdByUid is string
+        && resource.data.createdByUid.size() > 0
+        && resource.data.createdByUid == request.auth.uid;
+    }
+
+    function gradeTeacherUpdateAuthorized() {
+      return isSchoolTeacher(resource.data.schoolId)
+        && gradeOwnedByCaller()
+        && isAssignedSubjectTeacher(
+          request.resource.data.schoolId,
+          request.resource.data.classId,
+          request.resource.data.subjectId,
+          request.resource.data.teacherId
+        )
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.schoolId == resource.data.schoolId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (
+          !('updatedByUid' in request.resource.data)
+          || request.resource.data.updatedByUid == null
+          || request.resource.data.updatedByUid == request.auth.uid
+        );
+    }
+
+    function gradeTeacherDeleteAuthorized() {
+      return isSchoolTeacher(resource.data.schoolId)
+        && gradeOwnedByCaller()
+        && isAssignedSubjectTeacher(
+          resource.data.schoolId,
+          resource.data.classId,
+          resource.data.subjectId,
+          resource.data.teacherId
+        );
+    }
+
+    // Identity foundation.
+    match /schools/{schoolId} {
+      allow read: if hasActiveMembership(schoolId);
+      allow create, update: if isSchoolAdmin(schoolId);
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /school_memberships/{membershipId} {
+      allow read: if signedIn()
+        && resource.data.uid == request.auth.uid;
+      allow create, update: if signedIn()
+        && request.resource.data.uid == request.auth.uid;
+    }
+
+    match /teachers/{teacherId} {
+      allow read: if signedIn()
+        && hasActiveMembership(resource.data.schoolId);
+      allow create, update: if signedIn()
+        && (
+          isSchoolAdmin(request.resource.data.schoolId)
+          || (
+            request.resource.data.authUid == request.auth.uid
+            && request.resource.data.id == teacherId
+          )
+        );
+    }
+
+    match /class_subject_teachers/{assignmentId} {
+      allow read: if signedIn()
+        && hasActiveMembership(resource.data.schoolId);
+      allow create, update: if signedIn()
+        && (
+          isSchoolAdmin(request.resource.data.schoolId)
+          || (
+            isSchoolTeacher(request.resource.data.schoolId)
+            && teacherAuthMatches(request.resource.data.teacherId)
+            && request.resource.data.teacherId == teacherDoc(request.resource.data.teacherId).data.id
+          )
+        );
+    }
+
+    match /grades/{gradeId} {
+      allow read: if signedIn()
+        && hasActiveMembership(resource.data.schoolId);
+
+      allow create: if gradeCreateAuthorized()
+        && request.resource.data.id == gradeId;
+
+      allow update: if signedIn()
+        && gradeHasRequiredFields()
+        && request.resource.data.id == gradeId
+        && (
+          (
+            isSchoolAdmin(resource.data.schoolId)
+            && request.resource.data.schoolId == resource.data.schoolId
+            && request.resource.data.createdAt == resource.data.createdAt
+            && (
+              !('createdByUid' in resource.data)
+              || resource.data.createdByUid == null
+              || request.resource.data.createdByUid == resource.data.createdByUid
+            )
+          )
+          || gradeTeacherUpdateAuthorized()
+        );
+
+      allow delete: if signedIn()
+        && (
+          isSchoolAdmin(resource.data.schoolId)
+          || gradeTeacherDeleteAuthorized()
+        );
+    }
+  }
+}

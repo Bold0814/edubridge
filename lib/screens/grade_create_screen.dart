@@ -1,8 +1,11 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/grade.dart';
 import '../models/school_settings.dart';
 import '../models/student.dart';
+import '../services/grade_write_authorization.dart';
 import '../state/app_store.dart';
 
 class GradeCreateScreen extends StatefulWidget {
@@ -51,6 +54,7 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
   String? _selectedSubject;
   String? _selectedTerm;
   String? _previewLetter;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -115,48 +119,115 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
     }
   }
 
+  void _showError(String message, {String? debugCode}) {
+    final text = (kDebugMode && debugCode != null && debugCode.isNotEmpty)
+        ? '$message ($debugCode)'
+        : message;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
   Future<void> _save() async {
+    if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
 
+    // Prefer explicit state over FormField values (Student equality / lock UI).
+    final student = _selectedStudent;
+    final subjectName = _selectedSubject?.trim();
+    final term = _selectedTerm?.trim();
     final scoreText = _scoreController.text.trim();
-    final student = _selectedStudent!;
+
+    if (student == null || student.id.trim().isEmpty) {
+      _showError(Grade.missingStudentIdMessage);
+      return;
+    }
+    if (subjectName == null || subjectName.isEmpty) {
+      _showError(Grade.missingSubjectIdMessage);
+      return;
+    }
+    if (term == null || term.isEmpty) {
+      _showError(Grade.missingTermIdMessage);
+      return;
+    }
+
+    final subject = widget.store.subjectByName(subjectName);
+    if (subject == null) {
+      _showError(Grade.missingSubjectIdMessage);
+      return;
+    }
+
+    final permission = widget.store.canTeacherManageGrades(
+      classId: widget.className,
+      subjectId: subject.id,
+    );
+    if (!permission.allowed) {
+      _showError(
+        Grade.permissionDeniedMessage,
+        debugCode: permission.debugLabel,
+      );
+      return;
+    }
+
+    final letter = Grade.letterFromScore(num.parse(scoreText));
     final existing = widget.existing;
-    final grade = Grade(
+    final draft = Grade(
       id: existing?.id ?? widget.store.nextGradeId(),
       className: widget.className,
       studentId: student.id,
       studentName: student.fullName,
-      subject: _selectedSubject!,
+      subject: subject.name,
+      subjectId: subject.id,
       score: scoreText,
-      term: _selectedTerm!,
-      letterGrade: Grade.letterFromScore(num.parse(scoreText)),
+      term: term,
+      termId: term,
+      letterGrade: letter,
     );
 
+    setState(() => _saving = true);
     try {
-      if (existing != null) {
-        await widget.store.updateGrade(grade);
-      } else {
-        await widget.store.addGrade(grade);
-      }
+      final saved = await widget.store.saveGrade(
+        draft,
+        isUpdate: existing != null,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Дүн амжилттай хадгалагдлаа.')),
+      );
+      Navigator.pop(context, saved);
     } on PermissionDeniedException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.message)));
-      return;
+      _showError(e.message);
+    } on GradeSaveException catch (e) {
+      if (!mounted) return;
+      _showError(e.message, debugCode: e.debugCode);
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      final message = e.code == 'permission-denied'
+          ? Grade.permissionDeniedMessage
+          : Grade.genericSaveFailedMessage;
+      _showError(
+        message,
+        debugCode: e.code == 'permission-denied'
+            ? GradePermissionResult.firestoreDenied
+            : e.code,
+      );
+    } on ArgumentError catch (e) {
+      if (!mounted) return;
+      _showError(
+        e.message?.toString() ?? Grade.genericSaveFailedMessage,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showError(Grade.genericSaveFailedMessage);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Дүн амжилттай хадгалагдлаа.')),
-    );
-    Navigator.pop(context, grade);
   }
 
   @override
   Widget build(BuildContext context) {
     final students = widget.store.studentsFor(widget.className);
     final theme = Theme.of(context);
+    final canSubmit = students.isNotEmpty && !_saving;
 
     return Scaffold(
       appBar: AppBar(
@@ -182,9 +253,9 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
                   'Энэ ангид сурагч байхгүй байна. Эхлээд сурагч нэмнэ үү.',
                 ),
               ),
-            DropdownButtonFormField<Student>(
+            DropdownButtonFormField<String>(
               key: ValueKey('grade-student-${_selectedStudent?.id}'),
-              initialValue: _selectedStudent,
+              initialValue: _selectedStudent?.id,
               isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Сурагч',
@@ -194,8 +265,8 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
               icon: const Icon(Icons.arrow_drop_down),
               items: students
                   .map(
-                    (student) => DropdownMenuItem<Student>(
-                      value: student,
+                    (student) => DropdownMenuItem<String>(
+                      value: student.id,
                       child: Text(
                         student.fullName,
                         overflow: TextOverflow.ellipsis,
@@ -203,13 +274,23 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
                     ),
                   )
                   .toList(),
-              onChanged: students.isEmpty
+              onChanged: students.isEmpty || _saving
                   ? null
                   : (value) {
-                      setState(() => _selectedStudent = value);
+                      Student? match;
+                      for (final item in students) {
+                        if (item.id == value) {
+                          match = item;
+                          break;
+                        }
+                      }
+                      setState(() => _selectedStudent = match);
                     },
               validator: (value) {
-                if (value == null) return 'Сурагчаа сонгоно уу';
+                final id = value ?? _selectedStudent?.id;
+                if (id == null || id.isEmpty) {
+                  return 'Сурагчаа сонгоно уу';
+                }
                 return null;
               },
             ),
@@ -243,11 +324,14 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
                       ),
                     )
                     .toList(),
-                onChanged: (value) {
-                  setState(() => _selectedSubject = value);
-                },
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        setState(() => _selectedSubject = value);
+                      },
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
+                  final selected = value ?? _selectedSubject;
+                  if (selected == null || selected.isEmpty) {
                     return 'Хичээлээ сонгоно уу';
                   }
                   return null;
@@ -256,6 +340,7 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _scoreController,
+              enabled: !_saving,
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
                 labelText: 'Дүн',
@@ -295,11 +380,14 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
                     ),
                   )
                   .toList(),
-              onChanged: (value) {
-                setState(() => _selectedTerm = value);
-              },
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _selectedTerm = value);
+                    },
               validator: (value) {
-                if (value == null || value.isEmpty) {
+                final selected = value ?? _selectedTerm;
+                if (selected == null || selected.isEmpty) {
                   return 'Улирлаа сонгоно уу';
                 }
                 return null;
@@ -307,11 +395,17 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
             ),
             const SizedBox(height: 24),
             FilledButton(
-              onPressed: students.isEmpty ? null : _save,
+              onPressed: canSubmit ? _save : null,
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(48),
               ),
-              child: const Text('Дүн хадгалах'),
+              child: _saving
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Дүн хадгалах'),
             ),
           ],
         ),

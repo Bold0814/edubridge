@@ -1,5 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import '../debug/firestore_debug_log.dart';
 import '../models/account_status.dart';
 import '../models/announcement.dart';
 import '../models/announcement_read_receipt.dart';
@@ -7,6 +9,11 @@ import '../models/app_role.dart';
 import '../models/app_settings.dart';
 import '../models/attendance_record.dart';
 import '../models/class_subject_teacher.dart';
+import '../models/class_naming.dart';
+import '../models/firestore_class_subject_teacher.dart';
+import '../models/firestore_school_membership.dart';
+import '../models/firestore_teacher.dart';
+import '../models/firestore_user_profile.dart';
 import '../models/grade.dart';
 import '../models/guardian.dart';
 import '../models/guardian_student.dart';
@@ -24,12 +31,22 @@ import '../models/teacher_note.dart';
 import '../models/timetable.dart';
 import '../models/user_account.dart';
 import '../repositories/edubridge_repository.dart';
+import '../services/app_clock.dart';
 import '../services/database_service.dart';
+import '../services/firebase_auth_service.dart';
+import '../services/firestore_grade_repository.dart';
+import '../services/firestore_identity_repository.dart';
+import '../services/firestore_staff_repository.dart';
+import '../services/grade_repository.dart';
+import '../services/grade_average_calculator.dart';
+import '../services/grade_write_authorization.dart';
 import '../services/password_hasher.dart';
 import '../services/password_rules.dart';
 import '../services/phone_normalizer.dart';
 import '../services/pin_rules.dart';
+import '../services/sqlite_grade_repository.dart';
 import '../services/student_login_ids.dart';
+import '../services/teacher_authorization_service.dart';
 
 /// First-time admin setup checklist, derived from stored school data.
 class SchoolSetupProgress {
@@ -99,6 +116,19 @@ enum LoginResult {
   temporarilyLocked,
 }
 
+/// Minimal Firebase Auth session used after email/password sign-in.
+class FirebaseEmailSession {
+  const FirebaseEmailSession({
+    required this.uid,
+    required this.email,
+    this.displayName,
+  });
+
+  final String uid;
+  final String email;
+  final String? displayName;
+}
+
 extension LoginResultMessage on LoginResult {
   String get message {
     switch (this) {
@@ -127,12 +157,51 @@ enum ActivationLookupResult { ok, mismatch, alreadyActive }
 
 /// In-memory cache synchronized with SQLite through [EduBridgeRepository].
 class AppStore extends ChangeNotifier {
-  AppStore(this._repository);
+  AppStore(
+    this._repository, {
+    GradeRepository? gradeRepository,
+    FirestoreStaffRepository? firestoreStaff,
+    this._firebaseAuth,
+    this._firestoreIdentity,
+    this._firebaseEmailSignIn,
+  }) : _gradeRepository =
+           gradeRepository ?? SqliteGradeRepository(_repository),
+       // Avoid touching FirebaseFirestore.instance in unit tests / SQLite-only mode.
+       _firestoreStaff =
+           firestoreStaff ??
+           FirestoreStaffRepository(store: MemoryGradeDocumentStore());
 
   final EduBridgeRepository _repository;
 
+  /// Shared source of truth for all grade screens (Firestore and/or SQLite).
+  final GradeRepository _gradeRepository;
+  final FirestoreStaffRepository _firestoreStaff;
+  final FirebaseAuthService? _firebaseAuth;
+  final FirestoreIdentityRepository? _firestoreIdentity;
+  final Future<FirebaseEmailSession> Function({
+    required String email,
+    required String password,
+  })?
+  _firebaseEmailSignIn;
+
+  @visibleForTesting
+  GradeRepository get gradeRepository => _gradeRepository;
+
+  @visibleForTesting
+  FirestoreStaffRepository get firestoreStaffRepository => _firestoreStaff;
+
+  static const gradeWriteAuthorization = GradeWriteAuthorization();
+
+  FirebaseAuthService get _auth => _firebaseAuth ?? FirebaseAuthService();
+  FirestoreIdentityRepository get _identity =>
+      _firestoreIdentity ?? FirestoreIdentityRepository();
+
   /// Used by debug-only developer tools for batch SQLite access.
   EduBridgeRepository get repository => _repository;
+
+  /// Last Firebase / auth detail message for the login screen (when set).
+  String? get loginErrorDetail => _loginErrorDetail;
+  String? _loginErrorDetail;
 
   static const defaultSchoolId = DatabaseService.defaultSchoolId;
   static const _prefLastRole = 'last_role';
@@ -378,6 +447,194 @@ class AppStore extends ChangeNotifier {
   static const subjectEditDeniedMessage =
       'Та энэ хичээлийн мэдээллийг засах эрхгүй байна.';
 
+  /// Shared Mongolian denial messages (also on [TeacherAuthorizationService]).
+  static const recordEditDeniedMessage =
+      TeacherAuthorizationService.editDeniedMessage;
+  static const recordDeleteDeniedMessage =
+      TeacherAuthorizationService.deleteDeniedMessage;
+  static const recordOwnOnlyMessage =
+      TeacherAuthorizationService.ownRecordOnlyMessage;
+
+  /// Current teacher/admin authorization helper (stable IDs only).
+  ///
+  /// Teacher workspace uses ownership restrictions. Admin unrestricted
+  /// management applies only when the active membership role is admin
+  /// ([hasAdminPermissionForActiveSchool]) — not merely because a teacher
+  /// profile exists alongside an admin account.
+  TeacherAuthorizationService get teacherAuthorization {
+    String? authUid;
+    try {
+      authUid = _auth.currentUser?.uid;
+    } catch (_) {
+      authUid = null;
+    }
+    final teacherId = _activeContext.teacherId;
+    final inTeacherWorkspace =
+        _activeContext.role == AppRole.teacher &&
+        teacherId != null &&
+        teacherId.isNotEmpty;
+    return TeacherAuthorizationService(
+      authUid: authUid,
+      teacherDocId: teacherId,
+      schoolId: activeSchoolId,
+      // Admin+teacher: teacher workspace keeps ownership rules.
+      isAdmin: hasAdminPermissionForActiveSchool && !inTeacherWorkspace,
+      isHomeroomOf: (classId) {
+        if (teacherId == null || teacherId.isEmpty) return false;
+        return homeroomTeacherForClass(classId)?.id == teacherId;
+      },
+      isAssignedTo: (classId, subjectId) {
+        if (teacherId == null || teacherId.isEmpty) return false;
+        return teacherIdForClassSubject(classId, subjectId) == teacherId;
+      },
+      teachesInClass: (classId) {
+        if (teacherId == null || teacherId.isEmpty) return false;
+        if (homeroomTeacherForClass(classId)?.id == teacherId) return true;
+        for (final item in _assignments) {
+          if (item.teacherId != teacherId) continue;
+          if (_sameClassIdentity(item.classId, classId)) return true;
+        }
+        return false;
+      },
+    );
+  }
+
+  String? get _currentAuthUid {
+    try {
+      return _auth.currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Signed-in app session (bootstrap / seed writes have no user id).
+  bool get _hasSignedInActor {
+    final userId = _activeContext.userId ?? _selectedDevUserId;
+    return userId != null && userId.isNotEmpty;
+  }
+
+  RecordOwnership _noteOwnership(TeacherNote note, {String? classId}) {
+    return RecordOwnership(
+      schoolId: note.schoolId ?? activeSchoolId,
+      classId: note.classId ?? classId,
+      subjectId: note.subjectId,
+      createdByUid: note.createdByUid,
+      createdByTeacherId: note.teacherId,
+    );
+  }
+
+  RecordOwnership _gradeOwnership(Grade grade) {
+    return RecordOwnership(
+      schoolId: grade.schoolId ?? activeSchoolId,
+      classId: grade.className,
+      subjectId: grade.subjectId,
+      createdByUid: grade.createdByUid,
+      createdByTeacherId: grade.teacherId,
+    );
+  }
+
+  RecordOwnership _homeworkOwnership(Homework homework) {
+    final subjectId =
+        homework.subjectId ?? subjectByName(homework.subject)?.id;
+    return RecordOwnership(
+      schoolId: homework.schoolId ?? activeSchoolId,
+      classId: homework.className,
+      subjectId: subjectId,
+      createdByUid: homework.createdByUid,
+      createdByTeacherId: homework.createdByTeacherId,
+    );
+  }
+
+  RecordOwnership _announcementOwnership(Announcement item) {
+    return RecordOwnership(
+      schoolId: item.schoolId,
+      classId: item.className,
+      subjectId: null,
+      createdByUid: item.createdByUid,
+      createdByTeacherId: item.createdByTeacherId,
+    );
+  }
+
+  RecordOwnership _attendanceOwnership(AttendanceRecord record) {
+    return RecordOwnership(
+      schoolId: record.schoolId ?? activeSchoolId,
+      classId: record.className,
+      subjectId: record.subjectId,
+      createdByUid: record.createdByUid,
+      createdByTeacherId: record.recordedByTeacherId,
+    );
+  }
+
+  bool canEditAdvice(TeacherNote note, {required String classId}) {
+    return teacherAuthorization.canEditRecord(
+      kind: TeacherRecordKind.advice,
+      ownership: _noteOwnership(note, classId: classId),
+    );
+  }
+
+  bool canDeleteAdvice(TeacherNote note, {required String classId}) {
+    return teacherAuthorization.canDeleteRecord(
+      kind: TeacherRecordKind.advice,
+      ownership: _noteOwnership(note, classId: classId),
+    );
+  }
+
+  bool canEditAnnouncement(Announcement item) {
+    return teacherAuthorization.canEditRecord(
+      kind: TeacherRecordKind.announcement,
+      ownership: _announcementOwnership(item),
+    );
+  }
+
+  bool canDeleteAnnouncement(Announcement item) {
+    return teacherAuthorization.canDeleteRecord(
+      kind: TeacherRecordKind.announcement,
+      ownership: _announcementOwnership(item),
+    );
+  }
+
+  bool canEditHomeworkRecord(Homework homework) {
+    return teacherAuthorization.canEditRecord(
+      kind: TeacherRecordKind.homework,
+      ownership: _homeworkOwnership(homework),
+    );
+  }
+
+  bool canDeleteHomeworkRecord(Homework homework) {
+    return teacherAuthorization.canDeleteRecord(
+      kind: TeacherRecordKind.homework,
+      ownership: _homeworkOwnership(homework),
+    );
+  }
+
+  bool canEditGradeRecord(Grade grade) {
+    return teacherAuthorization.canEditRecord(
+      kind: TeacherRecordKind.grade,
+      ownership: _gradeOwnership(grade),
+    );
+  }
+
+  bool canDeleteGradeRecord(Grade grade) {
+    return teacherAuthorization.canDeleteRecord(
+      kind: TeacherRecordKind.grade,
+      ownership: _gradeOwnership(grade),
+    );
+  }
+
+  bool canEditAttendanceRecord(AttendanceRecord record) {
+    return teacherAuthorization.canEditRecord(
+      kind: TeacherRecordKind.attendance,
+      ownership: _attendanceOwnership(record),
+    );
+  }
+
+  bool canDeleteAttendanceRecord(AttendanceRecord record) {
+    return teacherAuthorization.canDeleteRecord(
+      kind: TeacherRecordKind.attendance,
+      ownership: _attendanceOwnership(record),
+    );
+  }
+
   /// True when the active teacher is the homeroom teacher of [classId].
   bool isHomeroomTeacherOf(String classId) {
     final teacherId = _activeContext.teacherId;
@@ -392,6 +649,98 @@ class AppStore extends ChangeNotifier {
     return isHomeroomTeacherOf(classId);
   }
 
+  /// Shared grade permission for single / bulk / journal / edit / delete UIs.
+  ///
+  /// Uses local teacher document id + class/subject assignment — never name.
+  GradePermissionResult canTeacherManageGrades({
+    required String classId,
+    required int subjectId,
+    String? schoolId,
+  }) {
+    final resolvedSchoolId = schoolId ?? activeSchoolId;
+    final schoolClass = schoolClassById(classId);
+    final resolvedClassId = schoolClass?.id ?? classId;
+
+    String? authUid;
+    try {
+      authUid = _auth.currentUser?.uid;
+    } catch (_) {
+      authUid = null;
+    }
+
+    final appUserId = _activeContext.userId ?? _selectedDevUserId;
+    final teacherDocId = _activeContext.teacherId;
+    final teacher = teacherById(teacherDocId);
+    final teacherAuthUid = teacher?.authUid;
+    final assignmentTeacherId = teacherIdForClassSubject(
+      resolvedClassId,
+      subjectId,
+    );
+    final role = _activeContext.role ?? selectedDevelopmentRole;
+    final pathHint = 'grades/{gradeId}';
+
+    GradePermissionResult result;
+    if (hasAdminPermissionForActiveSchool) {
+      result = const GradePermissionResult.allowed();
+    } else if (teacherDocId == null || teacherDocId.isEmpty) {
+      result = const GradePermissionResult.denied(
+        GradePermissionResult.notSignedInTeacher,
+      );
+    } else if (teacher == null) {
+      result = const GradePermissionResult.denied(
+        GradePermissionResult.teacherProfileMissing,
+      );
+    } else if (schoolClass != null &&
+        resolvedSchoolId != null &&
+        schoolClass.schoolId != resolvedSchoolId) {
+      result = const GradePermissionResult.denied(
+        GradePermissionResult.schoolMismatch,
+      );
+    } else {
+      final subject = subjectById(subjectId);
+      if (subject == null || !subject.isActive) {
+        result = const GradePermissionResult.denied(
+          GradePermissionResult.subjectMissing,
+        );
+      } else if (resolvedSchoolId != null &&
+          !_matchesActiveSchool(subject.schoolId)) {
+        result = const GradePermissionResult.denied(
+          GradePermissionResult.schoolMismatch,
+        );
+      } else if (assignmentTeacherId == null) {
+        result = const GradePermissionResult.denied(
+          GradePermissionResult.assignmentMissing,
+        );
+      } else if (assignmentTeacherId != teacherDocId) {
+        result = const GradePermissionResult.denied(
+          GradePermissionResult.assignmentMissing,
+        );
+      } else {
+        result = const GradePermissionResult.allowed();
+      }
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        'GRADE_PERMISSION_DEBUG\n'
+        'authUid: $authUid\n'
+        'appUserId: $appUserId\n'
+        'teacherDocId: $teacherDocId\n'
+        'teacherAuthUid: $teacherAuthUid\n'
+        'assignmentTeacherId: $assignmentTeacherId\n'
+        'schoolId: $resolvedSchoolId\n'
+        'classId: $resolvedClassId\n'
+        'subjectId: $subjectId\n'
+        'role: $role\n'
+        'clientCanSave: ${result.allowed}\n'
+        'gradeDocumentPath: $pathHint\n'
+        'denialReason: ${result.denialReason}',
+      );
+    }
+
+    return result;
+  }
+
   /// Edit permission for a specific class + subject assignment.
   ///
   /// Homeroom alone is never enough. Requires matching teacher assignment.
@@ -399,18 +748,10 @@ class AppStore extends ChangeNotifier {
     required String classId,
     required int subjectId,
   }) {
-    if (hasAdminPermissionForActiveSchool) return true;
-    final teacherId = _activeContext.teacherId;
-    if (teacherId == null) return false;
-    final schoolClass = schoolClassById(classId);
-    final resolvedClassId = schoolClass?.id ?? classId;
-    if (schoolClass != null && !_matchesActiveSchool(schoolClass.schoolId)) {
-      return false;
-    }
-    final subject = subjectById(subjectId);
-    if (subject == null || !subject.isActive) return false;
-    if (!_matchesActiveSchool(subject.schoolId)) return false;
-    return teacherIdForClassSubject(resolvedClassId, subjectId) == teacherId;
+    return canTeacherManageGrades(
+      classId: classId,
+      subjectId: subjectId,
+    ).allowed;
   }
 
   bool teacherCanEditSubjectNamed({
@@ -605,7 +946,8 @@ class AppStore extends ChangeNotifier {
 
   Teacher? teacherForClassSubject(String classId, int subjectId) {
     for (final item in _assignments) {
-      if (item.classId == classId && item.subjectId == subjectId) {
+      if (item.subjectId != subjectId) continue;
+      if (_sameClassIdentity(item.classId, classId)) {
         return teacherById(item.teacherId);
       }
     }
@@ -621,7 +963,8 @@ class AppStore extends ChangeNotifier {
 
   String? teacherIdForClassSubject(String classId, int subjectId) {
     for (final item in _assignments) {
-      if (item.classId == classId && item.subjectId == subjectId) {
+      if (item.subjectId != subjectId) continue;
+      if (_sameClassIdentity(item.classId, classId)) {
         return item.teacherId;
       }
     }
@@ -669,7 +1012,7 @@ class AppStore extends ChangeNotifier {
           .add(student);
     }
 
-    _grades = await _repository.loadGrades();
+    _grades = await _gradeRepository.loadAll();
     _homework = await _repository.loadHomework();
     _announcements = await _repository.loadAnnouncements();
     _studentHomeworkStatuses = await _repository.loadStudentHomeworkStatuses();
@@ -988,28 +1331,88 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addSchoolClass({
-    required String name,
+    String? name,
+    int? gradeLevel,
+    String? section,
     String? schoolId,
     String? homeroomTeacherId,
   }) async {
     _ensureCanManageSchoolStructure();
-    final trimmed = name.trim();
-    if (trimmed.isEmpty) throw ArgumentError('EMPTY_CLASS');
     final sid = schoolId ?? _effectiveSchoolId;
-    if (_schoolClasses.any((c) => c.id == trimmed || c.name == trimmed)) {
-      throw ArgumentError('DUPLICATE_CLASS');
+
+    late final String displayName;
+    late final int? resolvedGrade;
+    late final String? resolvedSection;
+
+    if (gradeLevel != null) {
+      if (!ClassNaming.isValidGradeLevel(gradeLevel)) {
+        throw ArgumentError('INVALID_GRADE_LEVEL');
+      }
+      final rawSection = section?.trim() ?? '';
+      if (rawSection.isNotEmpty &&
+          ClassNaming.normalizeSection(rawSection) == null) {
+        throw ArgumentError('INVALID_SECTION');
+      }
+      resolvedGrade = gradeLevel;
+      resolvedSection = ClassNaming.normalizeSection(section);
+      displayName = ClassNaming.displayName(
+        gradeLevel: resolvedGrade,
+        section: resolvedSection,
+      );
+      final duplicate = _schoolClasses.any(
+        (c) =>
+            c.schoolId == sid &&
+            ClassNaming.sameIdentity(
+              aGrade: c.gradeLevel,
+              aSection: c.section,
+              bGrade: resolvedGrade,
+              bSection: resolvedSection,
+            ),
+      );
+      if (duplicate ||
+          _schoolClasses.any((c) => c.id == displayName || c.name == displayName)) {
+        throw ArgumentError('DUPLICATE_CLASS');
+      }
+    } else {
+      final trimmed = name?.trim() ?? '';
+      if (trimmed.isEmpty) throw ArgumentError('EMPTY_CLASS');
+      if (_schoolClasses.any((c) => c.id == trimmed || c.name == trimmed)) {
+        throw ArgumentError('DUPLICATE_CLASS');
+      }
+      displayName = trimmed;
+      final parsed = ClassNaming.tryParse(trimmed);
+      resolvedGrade = parsed?.gradeLevel;
+      resolvedSection = parsed?.section;
+      if (parsed == null) {
+        ClassNaming.debugLogUnparsed(trimmed);
+      } else {
+        final duplicate = _schoolClasses.any(
+          (c) =>
+              c.schoolId == sid &&
+              ClassNaming.sameIdentity(
+                aGrade: c.gradeLevel,
+                aSection: c.section,
+                bGrade: resolvedGrade,
+                bSection: resolvedSection,
+              ),
+        );
+        if (duplicate) throw ArgumentError('DUPLICATE_CLASS');
+      }
     }
+
     final schoolClass = SchoolClass(
-      id: trimmed,
-      name: trimmed,
+      id: displayName,
+      name: displayName,
       schoolId: sid,
       homeroomTeacherId: homeroomTeacherId,
+      gradeLevel: resolvedGrade,
+      section: resolvedSection,
     );
     await _repository.insertSchoolClass(schoolClass);
     _schoolClasses = [..._schoolClasses, schoolClass]
       ..sort((a, b) => a.name.compareTo(b.name));
-    _studentsByClass.putIfAbsent(trimmed, () => <Student>[]);
-    _attendanceByClass.putIfAbsent(trimmed, () => <AttendanceRecord>[]);
+    _studentsByClass.putIfAbsent(displayName, () => <Student>[]);
+    _attendanceByClass.putIfAbsent(displayName, () => <AttendanceRecord>[]);
     notifyListeners();
   }
 
@@ -2353,21 +2756,28 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Authenticates against local [UserAccount] password/PIN hashes.
+  /// Authenticates admin email/password via Firebase Auth.
+  /// Guardian / student / teacher username-or-phone login remains local.
   ///
-  /// [username] may be an admin/teacher username, guardian phone, or student code.
-  /// Role is resolved from the matched account — never from a pre-selected role.
-  ///
-  /// Password strength rules ([PasswordRules]) are NOT applied here — only hash
-  /// verification against the stored value (legacy weak passwords remain valid).
+  /// When [username] contains `@`, credentials are verified only with
+  /// `FirebaseAuth.signInWithEmailAndPassword` (no local hash check).
   Future<LoginResult> login({
     required String username,
     required String password,
     required bool rememberMe,
   }) async {
+    _loginErrorDetail = null;
     final trimmed = username.trim();
     if (trimmed.isEmpty) return LoginResult.missingUsername;
     if (password.isEmpty) return LoginResult.missingPassword;
+
+    if (trimmed.contains('@')) {
+      return _loginAdminWithFirebaseEmail(
+        email: trimmed,
+        password: password,
+        rememberMe: rememberMe,
+      );
+    }
 
     final resolved = _resolveLoginCandidate(trimmed);
     if (resolved == null) return LoginResult.invalidCredentials;
@@ -2385,7 +2795,8 @@ class AppStore extends ChangeNotifier {
       return LoginResult.temporarilyLocked;
     }
 
-    // Verify only — never run PasswordRules / PinRules strength checks at login.
+    // Local PIN / password verify for guardian, student, teacher (and legacy
+    // non-email admin usernames). Email admins never reach this branch.
     if (!PasswordHasher.verifyPassword(password, resolved.passwordHash)) {
       if (usesPin) {
         await _recordFailedPinAttempt(resolved);
@@ -2402,12 +2813,187 @@ class AppStore extends ChangeNotifier {
       await _resetPinAttempts(resolved);
     }
 
-    // Optional silent upgrade: re-store hash in current format when already current
-    // (no-op for salt:hash). Kept for forward-compatible migration hooks.
     await _maybeMigratePasswordHash(resolved, password);
 
     await selectDevelopmentUser(resolved, rememberMe: rememberMe);
     return LoginResult.success;
+  }
+
+  Future<LoginResult> _loginAdminWithFirebaseEmail({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) async {
+    try {
+      final FirebaseEmailSession session;
+      final injectedSignIn = _firebaseEmailSignIn;
+      if (injectedSignIn != null) {
+        session = await injectedSignIn(email: email, password: password);
+      } else {
+        await _auth.signIn(internalEmail: email, password: password);
+        final firebaseUser = _auth.currentUser;
+        if (firebaseUser == null) {
+          _loginErrorDetail = FirebaseAuthService.defaultErrorMessage;
+          return LoginResult.invalidCredentials;
+        }
+        session = FirebaseEmailSession(
+          uid: firebaseUser.uid,
+          email: firebaseUser.email ?? email,
+          displayName: firebaseUser.displayName,
+        );
+      }
+
+      final profile = await _identity.getUserProfile(session.uid);
+      if (profile == null) {
+        _loginErrorDetail = 'Хэрэглэгчийн профайл олдсонгүй.';
+        return LoginResult.invalidCredentials;
+      }
+      if (profile.status == FirestoreUserStatus.disabled) {
+        return LoginResult.inactive;
+      }
+      if (profile.status == FirestoreUserStatus.pendingActivation) {
+        return LoginResult.pendingActivation;
+      }
+
+      final appRole = _appRoleFromFirestore(profile.role);
+      if (appRole != AppRole.admin) {
+        _loginErrorDetail = 'Энэ эрхээр имэйлээр нэвтрэх боломжгүй.';
+        return LoginResult.invalidCredentials;
+      }
+
+      final account = await _ensureLocalAccountForFirebaseProfile(
+        uid: session.uid,
+        email: session.email,
+        profile: profile,
+        appRole: AppRole.admin,
+      );
+
+      final remoteMemberships = await _identity.listMembershipsForUid(
+        session.uid,
+      );
+      await _syncLocalMembershipsFromFirestore(
+        account: account,
+        remoteMemberships: remoteMemberships,
+      );
+
+      await selectDevelopmentUser(account, rememberMe: rememberMe);
+      return LoginResult.success;
+    } on FirebaseAuthServiceException catch (e) {
+      _loginErrorDetail = e.message;
+      if (e.code == 'too-many-requests') {
+        return LoginResult.temporarilyLocked;
+      }
+      return LoginResult.invalidCredentials;
+    } catch (e, st) {
+      debugPrint('Firebase email login failed: $e');
+      debugPrint('$st');
+      _loginErrorDetail = e.toString();
+      return LoginResult.invalidCredentials;
+    }
+  }
+
+  AppRole _appRoleFromFirestore(FirestoreUserRole role) {
+    switch (role) {
+      case FirestoreUserRole.platformAdmin:
+      case FirestoreUserRole.schoolAdmin:
+        return AppRole.admin;
+      case FirestoreUserRole.teacher:
+        return AppRole.teacher;
+      case FirestoreUserRole.guardian:
+        return AppRole.guardian;
+      case FirestoreUserRole.student:
+        return AppRole.student;
+    }
+  }
+
+  Future<UserAccount> _ensureLocalAccountForFirebaseProfile({
+    required String uid,
+    required String email,
+    required FirestoreUserProfile profile,
+    required AppRole appRole,
+  }) async {
+    final localId = 'fb_$uid';
+    final existing = userById(localId) ?? userByUsername(email);
+    if (existing != null) {
+      final updated = existing.copyWith(
+        username: email.trim().toLowerCase(),
+        role: appRole,
+        isActive: true,
+        status: AccountStatus.active,
+        // Marker only — never used for local verification on email login.
+        passwordHash: existing.passwordHash.isEmpty
+            ? 'firebase-auth'
+            : existing.passwordHash,
+      );
+      await _repository.updateUserAccount(updated);
+      _userAccounts = [
+        for (final user in _userAccounts)
+          if (user.id == updated.id) updated else user,
+      ];
+      return updated;
+    }
+
+    final account = UserAccount(
+      id: localId,
+      username: email.trim().toLowerCase(),
+      passwordHash: 'firebase-auth',
+      role: appRole,
+      isActive: true,
+      status: AccountStatus.active,
+      createdAt: DateTime.now(),
+    );
+    await _repository.insertUserAccount(account);
+    _userAccounts = [..._userAccounts, account]
+      ..sort((a, b) => a.username.compareTo(b.username));
+    return account;
+  }
+
+  Future<void> _syncLocalMembershipsFromFirestore({
+    required UserAccount account,
+    required List<FirestoreSchoolMembership> remoteMemberships,
+  }) async {
+    for (final remote in remoteMemberships) {
+      final firestoreSchool = await _identity.getSchool(remote.schoolId);
+      if (firestoreSchool != null) {
+        await createSchool(
+          id: firestoreSchool.id,
+          name: firestoreSchool.name,
+          code: firestoreSchool.code,
+          academicYear: SchoolSettings.currentAcademicYear(),
+          currentSemester: SchoolSettings.semesterOptions.first,
+        );
+      } else if (!_schools.any((s) => s.id == remote.schoolId)) {
+        await createSchool(
+          id: remote.schoolId,
+          name: remote.schoolId,
+          code: remote.schoolId,
+          academicYear: SchoolSettings.currentAcademicYear(),
+          currentSemester: SchoolSettings.semesterOptions.first,
+        );
+      }
+
+      final membershipId = 'mem-${account.id}-${remote.schoolId}';
+      final existingIndex = _memberships.indexWhere(
+        (m) => m.userId == account.id && m.schoolId == remote.schoolId,
+      );
+      final membership = UserSchoolMembership(
+        id: existingIndex >= 0 ? _memberships[existingIndex].id : membershipId,
+        userId: account.id,
+        schoolId: remote.schoolId,
+        role: AppRole.admin,
+        isActive: remote.status == FirestoreMembershipStatus.active,
+      );
+      if (existingIndex >= 0) {
+        await _repository.updateMembership(membership);
+        _memberships = [
+          for (var i = 0; i < _memberships.length; i++)
+            if (i == existingIndex) membership else _memberships[i],
+        ];
+      } else {
+        await _repository.insertMembership(membership);
+        _memberships = [..._memberships, membership];
+      }
+    }
   }
 
   /// Rehashes to the current format only when verification already succeeded and
@@ -2464,7 +3050,14 @@ class AppStore extends ChangeNotifier {
     _guardianStudentId = null;
     _rememberSession = false;
     _activeContext = ActiveAppContext.empty;
+    _loginErrorDetail = null;
     await _clearSessionPrefs();
+    try {
+      await _auth.signOut();
+    } catch (e, st) {
+      debugPrint('Firebase signOut during logout: $e');
+      debugPrint('$st');
+    }
     notifyListeners();
   }
 
@@ -2965,8 +3558,19 @@ class AppStore extends ChangeNotifier {
   }
 
   List<Grade> gradesForStudent(Student student) {
+    final schoolId = activeSchoolId;
     return _grades
-        .where((g) => g.studentId == student.id)
+        .where((g) {
+          // Never match by student name — only [Student.id].
+          if (g.studentId != student.id) return false;
+          if (schoolId != null &&
+              g.schoolId != null &&
+              g.schoolId!.isNotEmpty &&
+              g.schoolId != schoolId) {
+            return false;
+          }
+          return true;
+        })
         .toList(growable: false);
   }
 
@@ -2978,31 +3582,116 @@ class AppStore extends ChangeNotifier {
     return announcementsFor(student.className);
   }
 
-  /// Per-day attendance rows for one student (newest first where possible).
-  List<({AttendanceRecord record, AttendanceStatus status})>
+  /// Full attendance change history for one student (newest first).
+  ///
+  /// Every save is kept — never collapsed by date. Shared source for the
+  /// history screen and for deriving today's latest status.
+  List<({AttendanceRecord record, AttendanceStatus status, String? note})>
   attendanceEntriesForStudent(Student student) {
+    final schoolId = activeSchoolId ?? defaultSchoolId;
     final records = attendanceFor(student.className);
-    final result = <({AttendanceRecord record, AttendanceStatus status})>[];
+    final result =
+        <({AttendanceRecord record, AttendanceStatus status, String? note})>[];
     for (final record in records) {
+      if (record.schoolId != null &&
+          record.schoolId!.isNotEmpty &&
+          record.schoolId != schoolId) {
+        continue;
+      }
+      if (record.className != student.className) continue;
+
       final entries = record.entries;
       if (entries == null) continue;
       for (final entry in entries) {
-        if (entry.studentName == student.fullName) {
-          result.add((record: record, status: entry.status));
+        final idMatch =
+            entry.studentId != null &&
+            entry.studentId!.isNotEmpty &&
+            entry.studentId == student.id;
+        final nameMatch = entry.studentName == student.fullName;
+        if (idMatch || nameMatch) {
+          result.add((
+            record: record,
+            status: entry.status,
+            note: entry.normalizedNote,
+          ));
           break;
         }
       }
     }
+
+    result.sort((a, b) {
+      final aAt = a.record.recordedAt?.millisecondsSinceEpoch ?? 0;
+      final bAt = b.record.recordedAt?.millisecondsSinceEpoch ?? 0;
+      if (aAt != bAt) return bAt.compareTo(aAt);
+      final aKey = a.record.resolvedDateKey ?? '';
+      final bKey = b.record.resolvedDateKey ?? '';
+      return bKey.compareTo(aKey);
+    });
     return result;
   }
 
-  AttendanceStatus? todaysAttendanceStatus(Student student) {
-    final today = DateTime.now();
+  /// Latest class roll for a school/class/subject/dateKey (for form prefills).
+  AttendanceRecord? findAttendanceRoll({
+    required String className,
+    String? schoolId,
+    int? subjectId,
+    required String dateKey,
+  }) {
+    final sid = schoolId ?? activeSchoolId ?? defaultSchoolId;
+    final key = dateKey.trim();
+    AttendanceRecord? best;
+    var bestAt = -1;
+    for (final record in attendanceFor(className)) {
+      if (record.schoolId != null &&
+          record.schoolId!.isNotEmpty &&
+          record.schoolId != sid) {
+        continue;
+      }
+      if (!record.matchesDateKey(key)) continue;
+      if (record.subjectId != subjectId) continue;
+      final at = record.recordedAt?.millisecondsSinceEpoch ?? 0;
+      if (best == null || at >= bestAt) {
+        best = record;
+        bestAt = at;
+      }
+    }
+    return best;
+  }
+
+  /// Today's latest status for [student] (Asia/Ulaanbaatar dateKey).
+  ///
+  /// Uses the same history list as [attendanceEntriesForStudent], taking only
+  /// the newest entry whose dateKey is today. Never falls back to yesterday.
+  ({AttendanceRecord record, AttendanceStatus status, String? note})?
+  todaysAttendanceForStudent(Student student) {
+    final todayKey = AppClock.todayKey();
     for (final row in attendanceEntriesForStudent(student)) {
-      if (row.record.isOnCalendarDay(today)) return row.status;
+      if (row.record.matchesDateKey(todayKey)) {
+        return row;
+      }
     }
     return null;
   }
+
+  /// Status for [student] on a school [dateKey] (`yyyy-MM-dd`).
+  AttendanceStatus? attendanceStatusForStudentOnDate(
+    Student student,
+    String dateKey,
+  ) {
+    final key = dateKey.trim();
+    for (final row in attendanceEntriesForStudent(student)) {
+      if (row.record.matchesDateKey(key)) return row.status;
+    }
+    return null;
+  }
+
+  /// Today's status — identical query to [todaysAttendanceForStudent].
+  AttendanceStatus? todaysAttendanceStatus(Student student) {
+    return todaysAttendanceForStudent(student)?.status;
+  }
+
+  /// Forces calendar-bound learner cards (e.g. Өнөөдрийн ирц) to rebuild.
+  void refreshCalendarBoundViews() => notifyListeners();
 
   double? averageGradeForStudent(Student student) {
     return averageScore(gradesForStudent(student));
@@ -3466,7 +4155,7 @@ class AppStore extends ChangeNotifier {
   /// Shared grade filter for student summary + grade detail screens.
   ///
   /// Source of truth for the student key: [Grade.studentId] == [Student.id]
-  /// (not userAccountId / guardian link id).
+  /// (not userAccountId / guardian link id / student name).
   ///
   /// Optional [subjectId] / [subjectName] / [term] are applied only when
   /// non-null and non-empty — never as `subject = NULL` style matches.
@@ -3476,21 +4165,23 @@ class AppStore extends ChangeNotifier {
     int? subjectId,
     String? subjectName,
     String? term,
+    String? schoolId,
   }) {
-    if (activeSchoolId != null && !classes.contains(className)) {
+    final resolvedSchoolId = schoolId ?? activeSchoolId;
+    if (resolvedSchoolId != null && !classes.contains(className)) {
       return const <Grade>[];
     }
 
     final rosterIds = studentsFor(className).map((s) => s.id).toSet();
 
-    String? filterSubject;
+    String? filterSubjectName;
     if (subjectId != null) {
       final name = subjectById(subjectId)?.name.trim();
       if (name == null || name.isEmpty) return const <Grade>[];
-      filterSubject = name;
+      filterSubjectName = name;
     } else {
       final trimmed = subjectName?.trim();
-      filterSubject = (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+      filterSubjectName = (trimmed == null || trimmed.isEmpty) ? null : trimmed;
     }
 
     final trimmedTerm = term?.trim();
@@ -3503,10 +4194,24 @@ class AppStore extends ChangeNotifier {
           if (item.className != className) return false;
           if (!rosterIds.contains(item.studentId)) return false;
           if (studentId != null && item.studentId != studentId) return false;
-          if (filterSubject != null && item.subject.trim() != filterSubject) {
+          if (resolvedSchoolId != null &&
+              item.schoolId != null &&
+              item.schoolId!.isNotEmpty &&
+              item.schoolId != resolvedSchoolId) {
             return false;
           }
-          if (filterTerm != null && item.term.trim() != filterTerm) {
+          if (subjectId != null) {
+            if (item.subjectId != null) {
+              if (item.subjectId != subjectId) return false;
+            } else if (filterSubjectName != null &&
+                item.subject.trim() != filterSubjectName) {
+              return false;
+            }
+          } else if (filterSubjectName != null &&
+              item.subject.trim() != filterSubjectName) {
+            return false;
+          }
+          if (filterTerm != null && item.resolvedTermId != filterTerm) {
             return false;
           }
           return true;
@@ -3517,22 +4222,15 @@ class AppStore extends ChangeNotifier {
   /// Average of parseable numeric scores.
   ///
   /// Missing-grade rule: students (or subject groups) with no valid numeric
-  /// scores return `null`. The UI shows “Дүн оруулаагүй”. Non-numeric score
-  /// strings are ignored. Grades removed from storage are not included.
+  /// scores return `null`. The UI shows “—”. Non-numeric score strings are
+  /// ignored. Grades removed from storage are not included.
   double? averageScore(Iterable<Grade> grades) {
-    final scores = <double>[];
-    for (final grade in grades) {
-      final value = double.tryParse(grade.score.trim());
-      if (value != null) scores.add(value);
-    }
-    if (scores.isEmpty) return null;
-    return scores.reduce((a, b) => a + b) / scores.length;
+    return GradeAverageCalculator.average(grades);
   }
 
-  /// One-decimal display, or “Дүн оруулаагүй” when [average] is null.
+  /// One-decimal display, or “—” when [average] is null.
   String formatGradeAverage(double? average) {
-    if (average == null) return 'Дүн оруулаагүй';
-    return average.toStringAsFixed(1);
+    return GradeAverageCalculator.format(average);
   }
 
   double? averageGradeForClassStudent({
@@ -3550,6 +4248,33 @@ class AppStore extends ChangeNotifier {
         subjectId: subjectId,
         term: term,
       ),
+    );
+  }
+
+  /// Subject averages for a student (LEVEL 2), grouped by [Subject.id].
+  ///
+  /// Uses [gradesForStudentContext] so student, guardian, and teacher
+  /// summaries share the same filtered dataset.
+  ///
+  /// When [onlyWithGrades] is true (learner views), subjects with no grades
+  /// in the filtered set are omitted.
+  List<SubjectGradeAverage> subjectAveragesForStudent({
+    required String className,
+    required String studentId,
+    String? term,
+    String? schoolId,
+    bool onlyWithGrades = false,
+  }) {
+    final grades = gradesForStudentContext(
+      className: className,
+      studentId: studentId,
+      term: term,
+      schoolId: schoolId,
+    );
+    return GradeAverageCalculator.subjectAverages(
+      grades: grades,
+      subjects: activeSubjects,
+      onlyWithGrades: onlyWithGrades,
     );
   }
 
@@ -3752,7 +4477,7 @@ class AppStore extends ChangeNotifier {
       lessonDate: LessonOccurrence.dateOnly(lessonDate),
       periodId: periodId,
       timetableEntryId: timetableEntryId,
-      createdAt: DateTime.now(),
+      createdAt: AppClock.now(),
     );
     try {
       await _repository.insertLessonOccurrence(occurrence);
@@ -3983,7 +4708,27 @@ class AppStore extends ChangeNotifier {
     final schoolId = announcement.schoolId.isNotEmpty
         ? announcement.schoolId
         : _effectiveSchoolId;
-    final saved = announcement.copyWith(schoolId: schoolId);
+    final auth = teacherAuthorization;
+    if (_hasSignedInActor &&
+        !auth.canCreateRecord(
+          kind: TeacherRecordKind.announcement,
+          classId: announcement.className,
+          recordSchoolId: schoolId,
+        )) {
+      throw const PermissionDeniedException(
+        TeacherAuthorizationService.createDeniedMessage,
+      );
+    }
+    final teacherId = _activeContext.teacherId;
+    final now = AppClock.now().toIso8601String();
+    final saved = announcement.copyWith(
+      schoolId: schoolId,
+      createdByUid: announcement.createdByUid ?? _currentAuthUid,
+      createdByTeacherId: announcement.createdByTeacherId ?? teacherId,
+      createdAt: announcement.createdAt ?? now,
+      updatedAt: now,
+      updatedByUid: _currentAuthUid ?? teacherId,
+    );
     await _repository.insertAnnouncement(saved);
     _announcements.insert(0, saved);
     _unreadAnnouncementIds.add(saved.id);
@@ -3991,17 +4736,53 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> updateAnnouncement(Announcement announcement) async {
-    await _repository.updateAnnouncement(announcement);
-    final index = _announcements.indexWhere(
-      (item) => item.id == announcement.id,
+    Announcement? existing;
+    for (final item in _announcements) {
+      if (item.id == announcement.id) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing != null &&
+        _hasSignedInActor &&
+        !canEditAnnouncement(existing)) {
+      throw const PermissionDeniedException(recordOwnOnlyMessage);
+    }
+    if (existing == null &&
+        _hasSignedInActor &&
+        !canEditAnnouncement(announcement)) {
+      throw const PermissionDeniedException(recordEditDeniedMessage);
+    }
+    final now = AppClock.now().toIso8601String();
+    final saved = announcement.copyWith(
+      createdByUid: existing?.createdByUid ?? announcement.createdByUid,
+      createdByTeacherId:
+          existing?.createdByTeacherId ?? announcement.createdByTeacherId,
+      createdAt: existing?.createdAt ?? announcement.createdAt,
+      updatedAt: now,
+      updatedByUid: _currentAuthUid ?? _activeContext.teacherId,
     );
+    await _repository.updateAnnouncement(saved);
+    final index = _announcements.indexWhere((item) => item.id == saved.id);
     if (index >= 0) {
-      _announcements[index] = announcement;
+      _announcements[index] = saved;
       notifyListeners();
     }
   }
 
   Future<void> deleteAnnouncement(String id) async {
+    Announcement? existing;
+    for (final item in _announcements) {
+      if (item.id == id) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing != null &&
+        _hasSignedInActor &&
+        !canDeleteAnnouncement(existing)) {
+      throw const PermissionDeniedException(recordDeleteDeniedMessage);
+    }
     await _repository.deleteAnnouncement(id);
     _announcements.removeWhere((item) => item.id == id);
     _unreadAnnouncementIds.remove(id);
@@ -4131,27 +4912,47 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addHomework(Homework homework) async {
-    _ensureCanEditSubjectNamed(
-      classId: homework.className,
-      subjectName: homework.subject,
+    final subjectId =
+        homework.subjectId ?? subjectByName(homework.subject)?.id;
+    if (_hasSignedInActor &&
+        !teacherAuthorization.canCreateRecord(
+          kind: TeacherRecordKind.homework,
+          classId: homework.className,
+          subjectId: subjectId,
+          recordSchoolId: homework.schoolId ?? activeSchoolId,
+        )) {
+      throw const PermissionDeniedException(
+        TeacherAuthorizationService.createDeniedMessage,
+      );
+    }
+    final now = AppClock.now().toIso8601String();
+    final saved = homework.copyWith(
+      schoolId: homework.schoolId ?? _effectiveSchoolId,
+      subjectId: subjectId,
+      createdByUid: homework.createdByUid ?? _currentAuthUid,
+      createdByTeacherId:
+          homework.createdByTeacherId ?? _activeContext.teacherId,
+      createdAt: homework.createdAt ?? now,
+      updatedAt: now,
+      updatedByUid: _currentAuthUid ?? _activeContext.teacherId,
     );
-    await _repository.insertHomework(homework);
-    _homework.insert(0, homework);
+    await _repository.insertHomework(saved);
+    _homework.insert(0, saved);
 
     final schoolId = _effectiveSchoolId;
     final classId =
-        schoolClassById(homework.className)?.id ?? homework.className;
-    final now = DateTime.now();
+        schoolClassById(saved.className)?.id ?? saved.className;
+    final stamp = DateTime.now();
     final created = <StudentHomeworkStatus>[];
-    for (final student in studentsFor(homework.className)) {
+    for (final student in studentsFor(saved.className)) {
       final status = StudentHomeworkStatus(
         id: nextStudentHomeworkStatusId(),
         schoolId: schoolId,
         classId: classId,
-        homeworkId: homework.id,
+        homeworkId: saved.id,
         studentId: student.id,
         status: StudentHomeworkStatusValue.pending,
-        updatedAt: now,
+        updatedAt: stamp,
       );
       await _repository.upsertStudentHomeworkStatus(status);
       created.add(status);
@@ -4265,14 +5066,41 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> updateHomework(Homework homework) async {
-    _ensureCanEditSubjectNamed(
-      classId: homework.className,
-      subjectName: homework.subject,
+    Homework? existing;
+    for (final item in _homework) {
+      if (item.id == homework.id) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing != null &&
+        _hasSignedInActor &&
+        !canEditHomeworkRecord(existing)) {
+      throw const PermissionDeniedException(recordOwnOnlyMessage);
+    }
+    if (existing == null &&
+        _hasSignedInActor &&
+        !canEditHomeworkRecord(homework)) {
+      throw const PermissionDeniedException(recordEditDeniedMessage);
+    }
+    final now = AppClock.now().toIso8601String();
+    final saved = homework.copyWith(
+      schoolId: existing?.schoolId ?? homework.schoolId ?? _effectiveSchoolId,
+      subjectId:
+          homework.subjectId ??
+          existing?.subjectId ??
+          subjectByName(homework.subject)?.id,
+      createdByUid: existing?.createdByUid ?? homework.createdByUid,
+      createdByTeacherId:
+          existing?.createdByTeacherId ?? homework.createdByTeacherId,
+      createdAt: existing?.createdAt ?? homework.createdAt,
+      updatedAt: now,
+      updatedByUid: _currentAuthUid ?? _activeContext.teacherId,
     );
-    await _repository.updateHomework(homework);
-    final index = _homework.indexWhere((item) => item.id == homework.id);
+    await _repository.updateHomework(saved);
+    final index = _homework.indexWhere((item) => item.id == saved.id);
     if (index >= 0) {
-      _homework[index] = homework;
+      _homework[index] = saved;
       notifyListeners();
     }
   }
@@ -4285,11 +5113,10 @@ class AppStore extends ChangeNotifier {
         break;
       }
     }
-    if (existing != null) {
-      _ensureCanEditSubjectNamed(
-        classId: existing.className,
-        subjectName: existing.subject,
-      );
+    if (existing != null &&
+        _hasSignedInActor &&
+        !canDeleteHomeworkRecord(existing)) {
+      throw const PermissionDeniedException(recordDeleteDeniedMessage);
     }
     await _repository.deleteHomework(id);
     _homework.removeWhere((item) => item.id == id);
@@ -4301,61 +5128,512 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addTeacherNote(TeacherNote note) async {
-    await _repository.insertTeacherNote(note);
-    _teacherNotes = _sortedNewestFirst([..._teacherNotes, note]);
+    final classId = note.classId?.trim().isNotEmpty == true
+        ? note.classId!
+        : (studentById(note.studentId)?.className ?? '');
+    if (classId.isEmpty) {
+      throw const PermissionDeniedException(
+        TeacherAuthorizationService.createDeniedMessage,
+      );
+    }
+    if (_hasSignedInActor &&
+        !teacherAuthorization.canCreateRecord(
+          kind: TeacherRecordKind.advice,
+          classId: classId,
+          subjectId: note.subjectId,
+          recordSchoolId: note.schoolId ?? activeSchoolId,
+        )) {
+      throw const PermissionDeniedException(
+        TeacherAuthorizationService.createDeniedMessage,
+      );
+    }
+    final teacherId = _activeContext.teacherId ?? note.teacherId;
+    final now = AppClock.now().toIso8601String();
+    final saved = note.copyWith(
+      teacherId: teacherId,
+      schoolId: note.schoolId ?? activeSchoolId,
+      classId: classId,
+      createdByUid: note.createdByUid ?? _currentAuthUid,
+      updatedAt: now,
+      updatedByUid: _currentAuthUid ?? teacherId,
+    );
+    await _repository.insertTeacherNote(saved);
+    _teacherNotes = _sortedNewestFirst([..._teacherNotes, saved]);
     notifyListeners();
   }
 
   Future<void> updateTeacherNote(TeacherNote note) async {
-    await _repository.updateTeacherNote(note);
-    final index = _teacherNotes.indexWhere((item) => item.id == note.id);
+    TeacherNote? existing;
+    for (final item in _teacherNotes) {
+      if (item.id == note.id) {
+        existing = item;
+        break;
+      }
+    }
+    final classId =
+        note.classId ??
+        existing?.classId ??
+        studentById(note.studentId)?.className ??
+        '';
+    if (existing != null &&
+        _hasSignedInActor &&
+        !canEditAdvice(existing, classId: classId)) {
+      throw const PermissionDeniedException(recordOwnOnlyMessage);
+    }
+    if (existing == null &&
+        _hasSignedInActor &&
+        !canEditAdvice(note, classId: classId)) {
+      throw const PermissionDeniedException(recordEditDeniedMessage);
+    }
+    final now = AppClock.now().toIso8601String();
+    final saved = note.copyWith(
+      teacherId: existing?.teacherId ?? note.teacherId,
+      schoolId: existing?.schoolId ?? note.schoolId ?? activeSchoolId,
+      classId: classId,
+      createdByUid: existing?.createdByUid ?? note.createdByUid,
+      createdAt: existing?.createdAt ?? note.createdAt,
+      updatedAt: now,
+      updatedByUid: _currentAuthUid ?? _activeContext.teacherId,
+    );
+    await _repository.updateTeacherNote(saved);
+    final index = _teacherNotes.indexWhere((item) => item.id == saved.id);
     if (index >= 0) {
-      _teacherNotes[index] = note;
+      _teacherNotes[index] = saved;
       _teacherNotes = _sortedNewestFirst(_teacherNotes);
       notifyListeners();
     }
   }
 
   Future<void> deleteTeacherNote(String id) async {
+    TeacherNote? existing;
+    for (final item in _teacherNotes) {
+      if (item.id == id) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing != null && _hasSignedInActor) {
+      final classId =
+          existing.classId ??
+          studentById(existing.studentId)?.className ??
+          '';
+      if (!canDeleteAdvice(existing, classId: classId)) {
+        throw const PermissionDeniedException(recordDeleteDeniedMessage);
+      }
+    }
     await _repository.deleteTeacherNote(id);
     _teacherNotes.removeWhere((item) => item.id == id);
     notifyListeners();
   }
 
-  Future<void> addGrade(Grade grade) async {
-    _ensureCanEditSubjectNamed(
-      classId: grade.className,
-      subjectName: grade.subject,
+  /// Enriches a grade with school/class/subject/teacher/term ids and letter.
+  ///
+  /// Prefers the logged-in [activeContext.teacherId], then the account's
+  /// teacherId, then the class/subject assignment.
+  Grade prepareGradeForSave(Grade grade, {required bool isCreate}) {
+    final scoreValue = Grade.parseAndValidateScore(grade.score);
+    final letter = Grade.letterFromScore(scoreValue);
+    SchoolClass? resolvedClass = schoolClassById(grade.className);
+    if (resolvedClass == null) {
+      for (final item in _schoolClasses) {
+        if (item.name == grade.className) {
+          resolvedClass = item;
+          break;
+        }
+      }
+    }
+    final classId = resolvedClass?.id ?? grade.className.trim();
+    final schoolId = grade.schoolId?.trim().isNotEmpty == true
+        ? grade.schoolId!.trim()
+        : (activeSchoolId ?? resolvedClass?.schoolId ?? defaultSchoolId);
+    final subjectModel = grade.subjectId != null
+        ? subjectById(grade.subjectId!)
+        : subjectByName(grade.subject);
+    final subjectId = grade.subjectId ?? subjectModel?.id;
+    final subjectName = subjectModel?.name ?? grade.subject;
+    final fromContext = activeContext.teacherId?.trim();
+    final fromUser = authenticatedUser?.teacherId?.trim();
+    final fromAssignment = subjectId == null
+        ? null
+        : teacherIdForClassSubject(classId, subjectId);
+    // Canonical grade.teacherId is the teacher document id (never Firebase uid).
+    // Prefer the class/subject assignment so payload matches Firestore rules.
+    final teacherId =
+        (fromAssignment != null && fromAssignment.isNotEmpty
+            ? fromAssignment
+            : null) ??
+        (fromContext != null && fromContext.isNotEmpty ? fromContext : null) ??
+        (fromUser != null && fromUser.isNotEmpty ? fromUser : null) ??
+        (grade.teacherId?.trim().isNotEmpty == true
+            ? grade.teacherId!.trim()
+            : null);
+    final termId = (grade.termId?.trim().isNotEmpty == true)
+        ? grade.termId!.trim()
+        : grade.term.trim();
+    final gradeDate = grade.gradeDate?.trim().isNotEmpty == true
+        ? grade.gradeDate!.trim()
+        : AppClock.todayKey();
+
+    return Grade(
+      id: grade.id,
+      className: classId,
+      studentId: grade.studentId.trim(),
+      studentName: grade.studentName,
+      subject: subjectName,
+      score: scoreValue.toString(),
+      term: grade.term.trim().isEmpty ? termId : grade.term.trim(),
+      letterGrade: letter,
+      schoolId: schoolId,
+      subjectId: subjectId,
+      teacherId: teacherId,
+      termId: termId,
+      gradeType: grade.gradeType.isEmpty
+          ? Grade.defaultGradeType
+          : grade.gradeType,
+      title: (grade.title?.trim().isNotEmpty == true)
+          ? grade.title!.trim()
+          : subjectName,
+      note: grade.note,
+      gradeDate: gradeDate,
+      createdAt: grade.createdAt,
+      updatedAt: grade.updatedAt,
     );
-    await _repository.insertGrade(grade);
-    _grades.insert(0, grade);
+  }
+
+  /// Throws [GradeSaveException] when a required identifier is missing.
+  ///
+  /// [requireCloudIds] is true for Firestore-backed repositories so subject /
+  /// teacher ids are mandatory before a cloud write.
+  void validatePreparedGrade(
+    Grade grade, {
+    bool requireCloudIds = true,
+  }) {
+    if (grade.studentId.trim().isEmpty) {
+      throw const GradeSaveException(Grade.missingStudentIdMessage);
+    }
+    if (grade.resolvedTermId.isEmpty) {
+      throw const GradeSaveException(Grade.missingTermIdMessage);
+    }
+    if ((grade.schoolId ?? '').trim().isEmpty) {
+      throw const GradeSaveException(Grade.missingSchoolIdMessage);
+    }
+    if (grade.className.trim().isEmpty) {
+      throw const GradeSaveException(Grade.missingClassIdMessage);
+    }
+    if (requireCloudIds) {
+      if (grade.subjectId == null) {
+        throw const GradeSaveException(Grade.missingSubjectIdMessage);
+      }
+      if ((grade.teacherId ?? '').trim().isEmpty) {
+        throw const GradeSaveException(Grade.missingTeacherIdMessage);
+      }
+    }
+    Grade.parseAndValidateScore(grade.score);
+  }
+
+  void _debugLogGradeSaveContext(Grade grade) {
+    if (!kDebugMode) return;
+    String? authUid;
+    try {
+      authUid = _auth.currentUser?.uid;
+    } catch (_) {
+      authUid = null;
+    }
+    final subjectId = grade.subjectId;
+    final assignmentTeacherId = subjectId == null
+        ? null
+        : teacherIdForClassSubject(grade.className, subjectId);
+    String? homeroomTeacherId;
+    for (final item in _schoolClasses) {
+      if (item.id == grade.className || item.name == grade.className) {
+        homeroomTeacherId = item.homeroomTeacherId;
+        break;
+      }
+    }
+    final role = activeContext.role ?? selectedDevelopmentRole;
+    debugPrint(
+      'GradeSaveAuth '
+      'firebaseUid=$authUid '
+      'schoolId=${grade.schoolId} '
+      'classId=${grade.className} '
+      'studentId=${grade.studentId} '
+      'subjectId=${grade.subjectId} '
+      'gradeTeacherId=${grade.teacherId} '
+      'assignmentTeacherId=$assignmentTeacherId '
+      'homeroomTeacherId=$homeroomTeacherId '
+      'role=$role '
+      'score=${grade.score} '
+      'letterGrade=${grade.letterGrade ?? grade.resolvedLetterGrade}',
+    );
+  }
+
+  /// Debug/dev only: link the signed-in Firebase Auth uid to [teacherId].
+  ///
+  /// Refuses to overwrite a different existing authUid. Never matches by name.
+  Future<void> linkTeacherAuthUidForDebug({
+    required String teacherId,
+    required String authUid,
+  }) async {
+    if (!kDebugMode) {
+      throw StateError('linkTeacherAuthUidForDebug is debug-only');
+    }
+    final trimmedUid = authUid.trim();
+    final trimmedTeacherId = teacherId.trim();
+    if (trimmedUid.isEmpty || trimmedTeacherId.isEmpty) {
+      throw ArgumentError('teacherId and authUid are required');
+    }
+    final teacher = teacherById(trimmedTeacherId);
+    if (teacher == null) {
+      throw StateError('Teacher not found: $trimmedTeacherId');
+    }
+    final existing = teacher.authUid?.trim();
+    if (existing != null && existing.isNotEmpty && existing != trimmedUid) {
+      throw StateError(
+        'Teacher $trimmedTeacherId already linked to a different authUid',
+      );
+    }
+    final updated = teacher.copyWith(authUid: trimmedUid);
+    await _repository.updateTeacher(updated);
+    _teachers = [
+      for (final t in _teachers)
+        if (t.id == updated.id) updated else t,
+    ];
+    await _firestoreStaff.upsertTeacher(
+      FirestoreTeacher(
+        id: updated.id,
+        schoolId: updated.schoolId,
+        fullName: updated.fullName,
+        authUid: updated.authUid,
+        isActive: updated.isActive,
+      ),
+    );
     notifyListeners();
+  }
+
+  /// Upserts Firestore teacher + assignment + membership needed by security rules.
+  Future<void> ensureGradeCloudAuthContext(Grade grade) async {
+    final schoolId = grade.schoolId?.trim() ?? '';
+    final classId = grade.className.trim();
+    final subjectId = grade.subjectId;
+    final teacherId = grade.teacherId?.trim() ?? '';
+    if (schoolId.isEmpty ||
+        classId.isEmpty ||
+        subjectId == null ||
+        teacherId.isEmpty) {
+      return;
+    }
+
+    String? authUid;
+    try {
+      authUid = _auth.currentUser?.uid;
+    } catch (_) {
+      authUid = null;
+    }
+
+    var teacher = teacherById(teacherId);
+    if (teacher == null) return;
+
+    // Dev/test only: if this session's teacher has no authUid yet, link the
+    // currently authenticated Firebase user (never by display name).
+    if (kDebugMode &&
+        authUid != null &&
+        authUid.isNotEmpty &&
+        activeContext.teacherId == teacherId &&
+        (teacher.authUid == null || teacher.authUid!.trim().isEmpty)) {
+      await linkTeacherAuthUidForDebug(teacherId: teacherId, authUid: authUid);
+      teacher = teacherById(teacherId) ?? teacher;
+    }
+
+    if (authUid != null && authUid.isNotEmpty) {
+      final role = hasAdminPermissionForActiveSchool
+          ? FirestoreUserRole.schoolAdmin.wireValue
+          : FirestoreUserRole.teacher.wireValue;
+      try {
+        await _identity.createMembership(
+          schoolId: schoolId,
+          uid: authUid,
+          role: role,
+          status: FirestoreMembershipStatus.active,
+        );
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('GradeSaveAuth membership sync skipped: $e');
+        }
+      }
+    }
+
+    try {
+      await _firestoreStaff.upsertTeacher(
+        FirestoreTeacher(
+          id: teacher.id,
+          schoolId: teacher.schoolId.isNotEmpty ? teacher.schoolId : schoolId,
+          fullName: teacher.fullName,
+          authUid: teacher.authUid,
+          isActive: teacher.isActive,
+        ),
+      );
+
+      final assignmentTeacherId =
+          teacherIdForClassSubject(classId, subjectId) ?? teacherId;
+      await _firestoreStaff.upsertAssignment(
+        FirestoreClassSubjectTeacher(
+          id: FirestoreClassSubjectTeacher.documentId(
+            schoolId: schoolId,
+            classId: classId,
+            subjectId: subjectId,
+          ),
+          schoolId: schoolId,
+          classId: classId,
+          subjectId: subjectId,
+          teacherId: assignmentTeacherId,
+        ),
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('GradeSaveAuth staff sync skipped: $e');
+      }
+    }
+  }
+
+  /// Creates or updates a grade through the shared repository, then reloads.
+  Future<Grade> saveGrade(Grade grade, {required bool isUpdate}) async {
+    Grade? existing;
+    if (isUpdate) {
+      for (final item in _grades) {
+        if (item.id == grade.id) {
+          existing = item;
+          break;
+        }
+      }
+    }
+    final prepared = prepareGradeForSave(
+      isUpdate
+          ? grade.copyWith(createdAt: existing?.createdAt ?? grade.createdAt)
+          : grade,
+      isCreate: !isUpdate,
+    ).copyWith(
+      createdAt: existing?.createdAt ?? grade.createdAt,
+      createdByUid: isUpdate
+          ? (existing?.createdByUid ?? grade.createdByUid)
+          : (grade.createdByUid ?? _currentAuthUid),
+      updatedByUid: _currentAuthUid ?? _activeContext.teacherId,
+    );
+    validatePreparedGrade(
+      prepared,
+      requireCloudIds: _gradeRepository is! SqliteGradeRepository,
+    );
+    _debugLogGradeSaveContext(prepared);
+
+    final subjectIdForPerm = prepared.subjectId;
+    if (subjectIdForPerm != null) {
+      final permission = canTeacherManageGrades(
+        classId: prepared.className,
+        subjectId: subjectIdForPerm,
+        schoolId: prepared.schoolId,
+      );
+      if (!permission.allowed) {
+        final userId = _activeContext.userId ?? _selectedDevUserId;
+        if (userId != null) {
+          final detail = kDebugMode && permission.debugLabel.isNotEmpty
+              ? ' (${permission.debugLabel})'
+              : '';
+          throw PermissionDeniedException(
+            '${Grade.permissionDeniedMessage}$detail',
+          );
+        }
+      }
+    } else {
+      _ensureCanEditSubjectNamed(
+        classId: prepared.className,
+        subjectName: prepared.subject,
+      );
+    }
+
+    if (isUpdate && _hasSignedInActor) {
+      final ownershipSource = existing ?? prepared;
+      if (!canEditGradeRecord(ownershipSource)) {
+        throw const PermissionDeniedException(recordOwnOnlyMessage);
+      }
+    }
+
+    if (_gradeRepository is! SqliteGradeRepository) {
+      await ensureGradeCloudAuthContext(prepared);
+      // Re-log after possible authUid link / assignment sync.
+      _debugLogGradeSaveContext(
+        prepareGradeForSave(prepared, isCreate: !isUpdate),
+      );
+    }
+
+    try {
+      if (isUpdate) {
+        await _gradeRepository.update(prepared);
+      } else {
+        await _gradeRepository.create(prepared);
+      }
+    } on FirebaseException catch (e, st) {
+      debugLogFirestoreException(
+        exception: e,
+        stackTrace: st,
+        documentPath: FirestoreGradeRepository.pathFor(prepared.id),
+      );
+      if (e.code == 'permission-denied') {
+        final detail = kDebugMode
+            ? ' (${GradePermissionResult.firestoreDenied})'
+            : '';
+        throw GradeSaveException(
+          '${Grade.permissionDeniedMessage}$detail',
+          debugCode: e.code,
+        );
+      }
+      throw GradeSaveException(
+        Grade.genericSaveFailedMessage,
+        debugCode: e.code,
+      );
+    } on PermissionDeniedException {
+      rethrow;
+    } on GradeSaveException {
+      rethrow;
+    } catch (e, st) {
+      debugLogFirestoreException(
+        exception: e,
+        stackTrace: st,
+        documentPath: FirestoreGradeRepository.pathFor(prepared.id),
+      );
+      throw GradeSaveException(
+        Grade.genericSaveFailedMessage,
+        debugCode: e.runtimeType.toString(),
+      );
+    }
+
+    await reloadGrades();
+    Grade? saved;
+    for (final item in _grades) {
+      if (item.id == prepared.id) {
+        saved = item;
+        break;
+      }
+    }
+    if (saved == null) {
+      throw const GradeSaveException(
+        'Хадгалсан дүн жагсаалтад олдсонгүй. Дахин ачаална уу.',
+      );
+    }
+    return saved;
+  }
+
+  Future<void> addGrade(Grade grade) async {
+    await saveGrade(grade, isUpdate: false);
   }
 
   Future<void> addGrades(List<Grade> grades) async {
     if (grades.isEmpty) return;
     for (final grade in grades) {
-      _ensureCanEditSubjectNamed(
-        classId: grade.className,
-        subjectName: grade.subject,
-      );
+      await saveGrade(grade, isUpdate: false);
     }
-    await _repository.insertGrades(grades);
-    _grades.insertAll(0, grades);
-    notifyListeners();
   }
 
   Future<void> updateGrade(Grade grade) async {
-    _ensureCanEditSubjectNamed(
-      classId: grade.className,
-      subjectName: grade.subject,
-    );
-    await _repository.updateGrade(grade);
-    final index = _grades.indexWhere((item) => item.id == grade.id);
-    if (index >= 0) {
-      _grades[index] = grade;
-      notifyListeners();
-    }
+    await saveGrade(grade, isUpdate: true);
   }
 
   Future<void> deleteGrade(String id) async {
@@ -4366,41 +5644,157 @@ class AppStore extends ChangeNotifier {
         break;
       }
     }
-    if (existing != null) {
-      _ensureCanEditSubjectNamed(
-        classId: existing.className,
-        subjectName: existing.subject,
-      );
+    if (existing != null &&
+        _hasSignedInActor &&
+        !canDeleteGradeRecord(existing)) {
+      throw const PermissionDeniedException(recordDeleteDeniedMessage);
     }
-    await _repository.deleteGrade(id);
+    await _gradeRepository.delete(id);
     _grades.removeWhere((item) => item.id == id);
+    notifyListeners();
+  }
+
+  /// Reloads grades from the shared repository (after external changes).
+  Future<void> reloadGrades() async {
+    _grades = await _gradeRepository.loadAll();
     notifyListeners();
   }
 
   Future<void> addAttendance(String className, AttendanceRecord record) async {
     _ensureCanWriteAttendance(className);
-    await _repository.insertAttendance(record);
-    final records = _attendanceByClass.putIfAbsent(
-      className,
-      () => <AttendanceRecord>[],
-    );
-    records.insert(0, record);
-    notifyListeners();
+    final normalized = record.className == className
+        ? record
+        : record.copyWith(className: className);
+    await saveAttendance(normalized);
   }
 
+  /// Appends a new attendance history entry (never overwrites prior saves).
+  ///
+  /// Skips insert only when the latest roll for the same
+  /// school/class/subject/dateKey already has identical student statuses
+  /// (prevents accidental double-save duplicates).
+  Future<AttendanceRecord> saveAttendance(AttendanceRecord record) async {
+    _ensureCanWriteAttendance(record.className);
+    final schoolId = record.schoolId ?? activeSchoolId ?? defaultSchoolId;
+    var dateKey = record.resolvedDateKey ?? record.dateKey?.trim() ?? '';
+    if (dateKey.isEmpty && record.date.trim() == 'Өнөөдөр') {
+      dateKey = AppClock.todayKey();
+    }
+    if (dateKey.isEmpty) {
+      throw ArgumentError('ATTENDANCE_DATE_KEY_REQUIRED');
+    }
+
+    final recordedAt = record.recordedAt ?? AppClock.now();
+    final teacherId =
+        _activeContext.teacherId ??
+        authenticatedUser?.teacherId ??
+        record.recordedByTeacherId;
+
+    if (_hasSignedInActor &&
+        !teacherAuthorization.canCreateRecord(
+          kind: TeacherRecordKind.attendance,
+          classId: record.className,
+          subjectId: record.subjectId,
+          recordSchoolId: schoolId,
+        )) {
+      throw const PermissionDeniedException(
+        TeacherAuthorizationService.createDeniedMessage,
+      );
+    }
+
+    final toSave = AttendanceRecord.detailed(
+      id: nextAttendanceId(),
+      date: record.date.isNotEmpty
+          ? record.date
+          : AppClock.displayLabel(dateKey),
+      dateKey: dateKey,
+      schoolId: schoolId,
+      className: record.className,
+      subjectId: record.subjectId,
+      recordedAt: recordedAt,
+      recordedByTeacherId: teacherId,
+      note: record.note,
+      entries: record.entries ?? const [],
+      createdByUid: _currentAuthUid ?? record.createdByUid,
+      updatedByUid: _currentAuthUid ?? teacherId,
+    );
+
+    final latest = findAttendanceRoll(
+      className: toSave.className,
+      schoolId: schoolId,
+      subjectId: toSave.subjectId,
+      dateKey: dateKey,
+    );
+    if (latest != null && _sameAttendanceEntries(latest, toSave)) {
+      return latest;
+    }
+
+    await _repository.insertAttendance(toSave);
+    final records = _attendanceByClass.putIfAbsent(
+      toSave.className,
+      () => <AttendanceRecord>[],
+    );
+    records.insert(0, toSave);
+    notifyListeners();
+    return toSave;
+  }
+
+  bool _sameAttendanceEntries(AttendanceRecord a, AttendanceRecord b) {
+    final ae = a.entries ?? const <StudentAttendanceEntry>[];
+    final be = b.entries ?? const <StudentAttendanceEntry>[];
+    if (ae.length != be.length) return false;
+    final byStudent = <String, ({AttendanceStatus status, String? note})>{};
+    for (final e in ae) {
+      final key = (e.studentId != null && e.studentId!.isNotEmpty)
+          ? e.studentId!
+          : e.studentName;
+      byStudent[key] = (status: e.status, note: e.normalizedNote);
+    }
+    for (final e in be) {
+      final key = (e.studentId != null && e.studentId!.isNotEmpty)
+          ? e.studentId!
+          : e.studentName;
+      final prior = byStudent[key];
+      if (prior == null) return false;
+      if (prior.status != e.status) return false;
+      if (prior.note != e.normalizedNote) return false;
+    }
+    return true;
+  }
+
+  /// Explicit edit of one stored roll (legacy list edit). Prefer [saveAttendance]
+  /// for new changes so history is preserved.
   Future<void> updateAttendance(AttendanceRecord record) async {
     _ensureCanWriteAttendance(record.className);
-    await _repository.updateAttendance(record);
-    final records = _attendanceByClass[record.className];
-    if (records == null) return;
-    final index = records.indexWhere((item) => item.id == record.id);
-    if (index < 0) return;
-    records[index] = record;
-    notifyListeners();
+    await saveAttendance(record);
+  }
+
+  String teacherNameForAttendance(AttendanceRecord record) {
+    final id = record.recordedByTeacherId;
+    if (id != null && id.isNotEmpty) {
+      final teacher = teacherById(id);
+      if (teacher != null) return teacher.fullName;
+    }
+    return homeroomTeacherForClass(record.className)?.fullName ??
+        'Багш оноогоогүй';
   }
 
   Future<void> deleteAttendance(String className, String id) async {
-    _ensureCanWriteAttendance(className);
+    AttendanceRecord? existing;
+    final list = _attendanceByClass[className] ?? const <AttendanceRecord>[];
+    for (final item in list) {
+      if (item.id == id) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing != null) {
+      if (_hasSignedInActor && !canDeleteAttendanceRecord(existing)) {
+        throw const PermissionDeniedException(recordDeleteDeniedMessage);
+      }
+    } else {
+      _ensureCanWriteAttendance(className);
+    }
     await _repository.deleteAttendance(id);
     _attendanceByClass[className]?.removeWhere((item) => item.id == id);
     notifyListeners();
@@ -4433,7 +5827,7 @@ class AppStore extends ChangeNotifier {
       if (grade.studentId == student.id) {
         final updated = grade.copyWith(studentName: student.fullName);
         _grades[i] = updated;
-        await _repository.updateGrade(updated);
+        await _gradeRepository.update(updated);
       }
     }
 

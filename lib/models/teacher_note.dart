@@ -38,10 +38,17 @@ class TeacherNote {
     required this.priority,
     required this.isVisibleToGuardian,
     required this.isVisibleToStudent,
+    this.schoolId,
+    this.classId,
+    this.createdByUid,
+    this.updatedAt,
+    this.updatedByUid,
   });
 
   final String id;
   final String studentId;
+
+  /// Teacher document id of the author (canonical ownership teacher id).
   final String teacherId;
   final int? subjectId;
   final String createdAt;
@@ -50,6 +57,14 @@ class TeacherNote {
   final NotePriority priority;
   final bool isVisibleToGuardian;
   final bool isVisibleToStudent;
+
+  final String? schoolId;
+  final String? classId;
+  final String? createdByUid;
+  final String? updatedAt;
+  final String? updatedByUid;
+
+  String get createdByTeacherId => teacherId;
 
   DateTime? get createdAtDate => DateTime.tryParse(createdAt);
 
@@ -64,6 +79,11 @@ class TeacherNote {
     NotePriority? priority,
     bool? isVisibleToGuardian,
     bool? isVisibleToStudent,
+    String? schoolId,
+    String? classId,
+    String? createdByUid,
+    String? updatedAt,
+    String? updatedByUid,
   }) {
     return TeacherNote(
       id: id,
@@ -76,6 +96,11 @@ class TeacherNote {
       priority: priority ?? this.priority,
       isVisibleToGuardian: isVisibleToGuardian ?? this.isVisibleToGuardian,
       isVisibleToStudent: isVisibleToStudent ?? this.isVisibleToStudent,
+      schoolId: schoolId ?? this.schoolId,
+      classId: classId ?? this.classId,
+      createdByUid: createdByUid ?? this.createdByUid,
+      updatedAt: updatedAt ?? this.updatedAt,
+      updatedByUid: updatedByUid ?? this.updatedByUid,
     );
   }
 }

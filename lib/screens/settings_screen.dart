@@ -1,12 +1,18 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/school_settings.dart';
 import '../navigation/app_navigation.dart';
+import '../debug/firestore_debug_log.dart';
+import '../services/firebase_auth_service.dart';
+import '../services/firebase_connection_service.dart';
+import '../services/firestore_identity_repository.dart';
 import '../state/app_store.dart';
 import '../theme/app_spacing.dart';
 import '../widgets/admin_permission_gate.dart';
 import '../widgets/edubridge_logo.dart';
 import 'admin/data_security_screen.dart';
+import 'admin/firebase_auth_debug_dialog.dart';
 import 'guardian_list_screen.dart';
 import 'lesson_periods_settings_screen.dart';
 import 'user_account_management_screen.dart';
@@ -28,6 +34,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late String _semester;
   late final TextEditingController _schoolController;
   bool _saving = false;
+  bool _checkingFirebase = false;
+  bool _checkingFirestoreStructure = false;
 
   @override
   void initState() {
@@ -66,6 +74,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _runFirebaseConnectionCheck() async {
+    if (!kDebugMode || _checkingFirebase) return;
+    setState(() => _checkingFirebase = true);
+    try {
+      final result = await FirebaseConnectionService()
+          .runDebugConnectionCheck();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.message)));
+    } catch (e, st) {
+      debugPrint('Firebase холболт UI алдаа: $e');
+      debugPrint('$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(FirebaseConnectionService.failureMessage)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _checkingFirebase = false);
+      }
+    }
+  }
+
+  Future<void> _runFirestoreStructureCheck() async {
+    if (!FirestoreIdentityDebugSetup.isDebugActionEnabled() ||
+        _checkingFirestoreStructure) {
+      return;
+    }
+    setState(() => _checkingFirestoreStructure = true);
+    try {
+      final user = FirebaseAuthService().currentUser;
+      if (user == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(FirestoreIdentityDebugSetup.notSignedInMessage),
+          ),
+        );
+        return;
+      }
+
+      final result = await FirestoreIdentityDebugSetup().run(
+        uid: user.uid,
+        displayName: user.displayName ?? user.email ?? 'Debug Admin',
+        internalEmail: user.email ?? '',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.message)));
+    } catch (e, st) {
+      debugLogFirestoreException(
+        exception: e,
+        stackTrace: st,
+        documentPath: '(settings UI catch)',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${FirestoreIdentityDebugSetup.failureMessage}\n$e'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _checkingFirestoreStructure = false);
+      }
     }
   }
 
@@ -235,6 +313,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
               ),
             ),
+
+            if (kDebugMode) ...[
+              const SizedBox(height: AppSpacing.sectionSm),
+              Card(
+                child: ListTile(
+                  title: const Text('Firebase холболт шалгах'),
+                  trailing: _checkingFirebase
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_outlined),
+                  onTap: _checkingFirebase ? null : _runFirebaseConnectionCheck,
+                ),
+              ),
+              if (FirebaseAuthService.isDebugAuthCheckEnabled()) ...[
+                const SizedBox(height: AppSpacing.sectionSm),
+                Card(
+                  child: ListTile(
+                    title: const Text(FirebaseAuthDebugDialog.title),
+                    trailing: const Icon(Icons.lock_outline),
+                    onTap: () {
+                      showDialog<void>(
+                        context: context,
+                        builder: (context) => const FirebaseAuthDebugDialog(),
+                      );
+                    },
+                  ),
+                ),
+              ],
+              if (FirestoreIdentityDebugSetup.isDebugActionEnabled()) ...[
+                const SizedBox(height: AppSpacing.sectionSm),
+                Card(
+                  child: ListTile(
+                    title: const Text('Firestore бүтэц шалгах'),
+                    trailing: _checkingFirestoreStructure
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.account_tree_outlined),
+                    onTap: _checkingFirestoreStructure
+                        ? null
+                        : _runFirestoreStructureCheck,
+                  ),
+                ),
+              ],
+            ],
 
             const SizedBox(height: AppSpacing.section),
             Text('Аппын тухай', style: theme.textTheme.titleMedium),

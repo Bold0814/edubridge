@@ -1,0 +1,42 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "edubridge-e673c",
+          "appId": "1:143696580444:android:4b162668188c6fb8073b99",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "edubridge-e673c",
+          "appId": "1:143696580444:ios:7a77b495ec29f910073b99",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "macos": {
+        "default": {
+          "projectId": "edubridge-e673c",
+          "appId": "1:143696580444:ios:d1c03fc8cce0bd90073b99",
+          "uploadDebugSymbols": false,
+          "fileOutput": "macos/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "edubridge-e673c",
+          "configurations": {
+            "android": "1:143696580444:android:4b162668188c6fb8073b99",
+            "ios": "1:143696580444:ios:7a77b495ec29f910073b99",
+            "macos": "1:143696580444:ios:d1c03fc8cce0bd90073b99"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

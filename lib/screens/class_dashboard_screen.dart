@@ -12,7 +12,6 @@ import 'attendance_take_screen.dart';
 import 'class_journal_screen.dart';
 import 'grade_create_screen.dart';
 import 'grade_screen.dart';
-import 'homework_create_screen.dart';
 import 'homework_screen.dart';
 import 'student_list_screen.dart';
 import 'teacher_notes_screen.dart';
@@ -127,6 +126,7 @@ class ClassDashboardScreen extends StatelessWidget {
         builder: (context) => AttendanceTakeScreen(
           selectedClass: className ?? selectedClass,
           store: store,
+          subjectId: store.activeContext.subjectId,
         ),
       ),
     );
@@ -180,32 +180,6 @@ class ClassDashboardScreen extends StatelessWidget {
     if (!context.mounted) return;
   }
 
-  Future<void> _openHomeworkCreate(
-    BuildContext context, {
-    String? className,
-    String? subjectName,
-  }) async {
-    final targetClass = className ?? selectedClass;
-    final activeId = store.activeContext.subjectId;
-    final initialSubject =
-        subjectName ??
-        (activeId != null ? store.subjectById(activeId)?.name : null);
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => HomeworkCreateScreen(
-          className: targetClass,
-          store: store,
-          initialSubject: initialSubject,
-          lockSubject:
-              initialSubject != null &&
-              (activeId != null || subjectName != null),
-        ),
-      ),
-    );
-    if (!context.mounted) return;
-  }
-
   Future<void> _openTeacherNotes(BuildContext context) async {
     await Navigator.push(
       context,
@@ -250,7 +224,7 @@ class ClassDashboardScreen extends StatelessWidget {
       builder: (context, _) {
         final dash = TeacherDashboardSnapshot.fromStore(store, selectedClass);
         final assignedClasses = store.assignedClassesForActiveTeacher();
-        final todayLessons = TimetableService.todayLessonsForTeacherDashboard(
+        final todayLessons = TimetableService.todayLessonsForClass(
           store,
           selectedClass,
         );
@@ -410,7 +384,7 @@ class ClassDashboardScreen extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Text(
-                    'Өнөөдөр хичээл байхгүй',
+                    ResolvedLesson.emptyClassTodayMessage,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: AppColors.onSurfaceVariant,
                     ),
@@ -419,18 +393,15 @@ class ClassDashboardScreen extends StatelessWidget {
               )
             else
               ...todayLessons.map((lesson) {
-                final lessonSubject = store.subjectByName(lesson.subjectName);
                 return Padding(
                   padding: const EdgeInsets.only(bottom: _cardGap),
                   child: TeacherTodayLessonCard(
                     lesson: lesson,
                     onAttendance: () async {
-                      final subject = lessonSubject;
-                      if (subject == null ||
-                          !store.teacherCanEditClassSubject(
-                            classId: lesson.classId,
-                            subjectId: subject.id,
-                          )) {
+                      if (!store.teacherCanEditClassSubject(
+                        classId: lesson.classId,
+                        subjectId: lesson.subject.id,
+                      )) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(AppStore.subjectEditDeniedMessage),
@@ -440,7 +411,7 @@ class ClassDashboardScreen extends StatelessWidget {
                       }
                       await store.setTeacherWorkspace(
                         classId: lesson.classId,
-                        subjectId: subject.id,
+                        subjectId: lesson.subject.id,
                       );
                       if (!context.mounted) return;
                       await _openAttendanceTake(
@@ -452,16 +423,14 @@ class ClassDashboardScreen extends StatelessWidget {
                       context,
                       className: lesson.classId,
                       subjectName: lesson.subjectName,
-                      subjectId: lessonSubject?.id,
+                      subjectId: lesson.subject.id,
                       periodId: lesson.period.id,
                     ),
                     onHomework: () async {
-                      final subject = lessonSubject;
-                      if (subject == null ||
-                          !store.teacherCanEditClassSubject(
-                            classId: lesson.classId,
-                            subjectId: subject.id,
-                          )) {
+                      if (!store.teacherCanEditClassSubject(
+                        classId: lesson.classId,
+                        subjectId: lesson.subject.id,
+                      )) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(AppStore.subjectEditDeniedMessage),
@@ -471,22 +440,20 @@ class ClassDashboardScreen extends StatelessWidget {
                       }
                       await store.setTeacherWorkspace(
                         classId: lesson.classId,
-                        subjectId: subject.id,
+                        subjectId: lesson.subject.id,
                       );
                       if (!context.mounted) return;
-                      await _openHomeworkCreate(
+                      await _openHomework(
                         context,
                         className: lesson.classId,
-                        subjectName: lesson.subjectName,
+                        subjectId: lesson.subject.id,
                       );
                     },
                     onGrade: () async {
-                      final subject = lessonSubject;
-                      if (subject == null ||
-                          !store.teacherCanEditClassSubject(
-                            classId: lesson.classId,
-                            subjectId: subject.id,
-                          )) {
+                      if (!store.teacherCanEditClassSubject(
+                        classId: lesson.classId,
+                        subjectId: lesson.subject.id,
+                      )) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(AppStore.subjectEditDeniedMessage),
@@ -496,7 +463,7 @@ class ClassDashboardScreen extends StatelessWidget {
                       }
                       await store.setTeacherWorkspace(
                         classId: lesson.classId,
-                        subjectId: subject.id,
+                        subjectId: lesson.subject.id,
                       );
                       if (!context.mounted) return;
                       await _openGradeCreate(

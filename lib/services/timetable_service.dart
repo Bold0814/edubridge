@@ -2,6 +2,7 @@ import '../models/subject.dart';
 import '../models/teacher.dart';
 import '../models/timetable.dart';
 import '../state/app_store.dart';
+import 'app_clock.dart';
 
 /// Resolved lesson for display: period + subject + optional teacher from assignment.
 class ResolvedLesson {
@@ -19,11 +20,27 @@ class ResolvedLesson {
 
   String get classId => entry.classId;
   String get timeLabel => period.timeLabel;
+  String get scheduleHeading => period.scheduleHeading;
+  String get periodOrdinalLabel => period.periodOrdinalLabel;
   String get subjectName => subject.name;
+
+  static const emptyClassTodayMessage =
+      'Өнөөдөр энэ ангийн хичээл байхгүй.';
+  static const emptyTeacherTodayMessage = 'Өнөөдөр таны хичээл байхгүй.';
 }
 
 /// Builds today's (or a weekday's) lessons from AppStore timetable data.
+///
+/// Two separate concepts:
+/// - [todayLessonsForClass] — selected class full day schedule
+/// - [todayLessonsForTeacher] — logged-in teacher's own lessons
 abstract final class TimetableService {
+  /// Local calendar weekday for timetable filtering.
+  ///
+  /// Uses [AppClock.today] so UTC wall-clock instants do not shift the
+  /// school day to the previous/next weekday.
+  static int localWeekday([DateTime? now]) => AppClock.today(now).weekday;
+
   static List<ResolvedLesson> lessonsForClassOnWeekday(
     AppStore store,
     String classId,
@@ -32,45 +49,24 @@ abstract final class TimetableService {
     return _resolve(store, store.timetableForClassWeekday(classId, weekday));
   }
 
+  /// Selected class schedule for today (all subjects / teachers in that class).
+  ///
+  /// Does **not** filter by logged-in teacherId or activeSubjectId.
   static List<ResolvedLesson> todayLessonsForClass(
     AppStore store,
     String classId, {
     DateTime? now,
   }) {
-    final day = (now ?? DateTime.now()).weekday;
-    return lessonsForClassOnWeekday(store, classId, day);
+    return lessonsForClassOnWeekday(store, classId, localWeekday(now));
   }
 
-  /// Lessons for a teacher today, across all classes (assignment-resolved).
+  /// Logged-in teacher's own lessons today across assigned classes/subjects.
   static List<ResolvedLesson> todayLessonsForTeacher(
     AppStore store,
     String teacherId, {
     DateTime? now,
   }) {
-    final day = (now ?? DateTime.now()).weekday;
-    final entries = store.timetableEntriesForWeekday(day).where((entry) {
-      final assigned = store.teacherIdForClassSubject(
-        entry.classId,
-        entry.subjectId,
-      );
-      return assigned == teacherId;
-    });
-    return _resolve(store, entries);
-  }
-
-  /// Prefer linked teacher account; else show selected class timetable.
-  static List<ResolvedLesson> todayLessonsForTeacherDashboard(
-    AppStore store,
-    String selectedClass, {
-    DateTime? now,
-  }) {
-    final teacherId = store.selectedDevelopmentUser?.teacherId;
-    if (teacherId != null &&
-        teacherId.isNotEmpty &&
-        store.teacherById(teacherId) != null) {
-      return todayLessonsForTeacher(store, teacherId, now: now);
-    }
-    return todayLessonsForClass(store, selectedClass, now: now);
+    return _lessonsForTeacherOnWeekday(store, teacherId, localWeekday(now));
   }
 
   /// Weekday (1–7) → resolved lessons for a class.

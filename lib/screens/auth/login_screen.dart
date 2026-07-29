@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../navigation/app_navigation.dart';
@@ -8,7 +9,7 @@ import '../../widgets/edubridge_logo.dart';
 import '../onboarding/create_school_screen.dart';
 import 'first_time_access_screen.dart';
 
-/// Local username/password sign-in (no cloud auth).
+/// Email/password and local PIN sign-in.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.store});
 
@@ -52,7 +53,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (result != LoginResult.success) {
       setState(() {
         _submitting = false;
-        _error = result.message;
+        _error = widget.store.loginErrorDetail ?? result.message;
       });
       return;
     }
@@ -63,6 +64,33 @@ class _LoginScreenState extends State<LoginScreen> {
       preferLastSchool: false,
     );
     if (mounted) setState(() => _submitting = false);
+  }
+
+  void _showSchoolRegistrationRequestInfo() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Сургууль бүртгүүлэх хүсэлт'),
+        content: const Text(
+          'Сургууль шинээр бүртгүүлэхийн тулд EduBridge-ийн зөвшөөрөл '
+          'шаардлагатай. Онлайн хүсэлтийн систем удахгүй идэвхжинэ.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Ойлголоо'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openTestSchoolCreation() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => CreateSchoolScreen(store: widget.store),
+      ),
+    );
   }
 
   @override
@@ -194,16 +222,23 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextButton(
                     onPressed: _submitting
                         ? null
-                        : () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    CreateSchoolScreen(store: widget.store),
-                              ),
-                            );
-                          },
-                    child: const Text('Шинэ сургууль үүсгэх'),
+                        : _showSchoolRegistrationRequestInfo,
+                    child: const Text('Сургууль бүртгүүлэх хүсэлт'),
                   ),
+                  if (kDebugMode) ...[
+                    const SizedBox(height: AppSpacing.itemSm),
+                    Text(
+                      'Хөгжүүлэгчийн горим',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _submitting ? null : _openTestSchoolCreation,
+                      child: const Text('Туршилтын сургууль үүсгэх'),
+                    ),
+                  ],
                 ],
               ),
             ),

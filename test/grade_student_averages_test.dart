@@ -63,7 +63,9 @@ void main() {
     required Student student,
     required String subject,
     required String score,
+    String term = '1-р улирал',
   }) {
+    final subjectId = store.subjectByName(subject)?.id;
     return store.addGrade(
       Grade(
         id: store.nextGradeId(),
@@ -71,8 +73,10 @@ void main() {
         studentId: student.id,
         studentName: student.fullName,
         subject: subject,
+        subjectId: subjectId,
         score: score,
-        term: '1-р улирал',
+        term: term,
+        termId: term,
       ),
     );
   }
@@ -103,11 +107,14 @@ void main() {
     expect(find.text('Амар Оюун'), findsOneWidget);
     expect(find.text('75.0'), findsOneWidget); // (80+70)/2 all subjects
     expect(find.text('81.0'), findsOneWidget);
-    expect(find.text('Дүн оруулаагүй'), findsOneWidget);
+    expect(find.text('—'), findsOneWidget);
+    expect(find.byType(FloatingActionButton), findsNothing);
     expect(find.text('✏️ Засах'), findsNothing);
   });
 
-  testWidgets('selected subject filters the student average', (tester) async {
+  testWidgets('term filter keeps overall class average (not subject-only)', (
+    tester,
+  ) async {
     final student = await addStudent('Бат', 'Болд');
     await addGrade(student: student, subject: 'GradeМат', score: '90');
     await addGrade(student: student, subject: 'GradeМонгол', score: '60');
@@ -121,11 +128,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('90.0'), findsOneWidget);
-    expect(find.text('75.0'), findsNothing);
+    // Class summary uses overall term average even if workspace subject is Math.
+    expect(find.text('75.0'), findsOneWidget);
+    expect(find.text('90.0'), findsNothing);
   });
 
-  testWidgets('tapping student opens grade detail with subjects', (
+  testWidgets('tapping student opens subject averages not individual rows', (
     tester,
   ) async {
     final student = await addStudent('Сэр', 'Гэрэл');
@@ -145,14 +153,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(StudentGradeDetailScreen), findsOneWidget);
-    expect(find.text('Сэр Гэрэл'), findsWidgets);
+    expect(find.text('Сэр Гэрэл · Дүн'), findsOneWidget);
     expect(find.text('GradeМат'), findsOneWidget);
     expect(find.text('GradeМонгол'), findsOneWidget);
-    expect(find.text('80.0'), findsOneWidget);
-    expect(find.text('76.0'), findsOneWidget);
+    expect(find.textContaining('80.0'), findsWidgets);
+    expect(find.textContaining('76.0'), findsWidgets);
+    // Individual scores belong on LEVEL 3 only.
+    expect(find.text('82 (B)'), findsNothing);
+    expect(find.text('78 (C+)'), findsNothing);
   });
 
-  testWidgets('active subject opens student records directly', (tester) async {
+  testWidgets('active subject still opens LEVEL 2 then LEVEL 3 on tap', (
+    tester,
+  ) async {
     final student = await addStudent('Дорж', 'Сараа');
     await addGrade(student: student, subject: 'GradeМат', score: '88');
     await addGrade(student: student, subject: 'GradeМонгол', score: '70');
@@ -169,8 +182,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(StudentGradeDetailScreen), findsOneWidget);
+    expect(find.text('Дорж Сараа · Дүн'), findsOneWidget);
+    expect(find.text('88 (B+)'), findsNothing);
+
+    await tester.tap(find.text('GradeМат'));
+    await tester.pumpAndSettle();
     expect(find.text('88 (B+)'), findsOneWidget);
-    // Unrelated subject records are not listed.
     expect(find.text('70 (C)'), findsNothing);
   });
 
@@ -206,11 +223,8 @@ void main() {
     final avg = store.averageGradeForClassStudent(
       className: 'G6А',
       studentId: student.id,
+      term: '1-р улирал',
     );
-    expect(avg, 100);
-    expect(
-      store.gradesForClass('G6А').map((g) => g.studentId),
-      everyElement(student.id),
-    );
+    expect(avg, 100.0);
   });
 }

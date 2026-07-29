@@ -87,6 +87,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
       subjectId: _effectiveSubjectId,
       subjectName: _effectiveSubjectId == null ? _effectiveSubjectName : null,
       term: _effectiveTerm,
+      schoolId: widget.store.activeSchoolId,
     );
   }
 

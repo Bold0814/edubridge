@@ -492,13 +492,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ClassCreateScreen), findsOneWidget);
 
-      await tester.enterText(find.byType(TextFormField).first, 'ST8А');
+      await tester.tap(find.byType(DropdownButtonFormField<int>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('8-р анги').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField).first, 'а');
       await tester.tap(find.text('Нэмэх'));
       await tester.pumpAndSettle();
 
       expect(find.byType(ClassListScreen), findsOneWidget);
       expect(
-        store.schoolClassesForActiveSchool.any((c) => c.name == 'ST8А'),
+        store.schoolClassesForActiveSchool.any((c) => c.name == '8а анги'),
         isTrue,
       );
       expect(tester.takeException(), isNull);

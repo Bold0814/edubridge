@@ -104,8 +104,8 @@ class StudentHomeScreen extends StatelessWidget {
                     const SizedBox(height: AppSpacing.sectionSm),
                     LearnerTimelinePanel(
                       data: StudentTimeline.fromStore(store, student).data,
-                      onAttendanceTap: () {
-                        Navigator.push(
+                      onAttendanceTap: () async {
+                        await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => GuardianAttendanceScreen(
@@ -114,6 +114,7 @@ class StudentHomeScreen extends StatelessWidget {
                             ),
                           ),
                         );
+                        store.refreshCalendarBoundViews();
                       },
                       onGradesTap: () {
                         Navigator.push(

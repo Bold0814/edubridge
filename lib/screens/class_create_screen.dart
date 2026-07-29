@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/class_naming.dart';
 import '../state/app_store.dart';
 import '../theme/app_spacing.dart';
 import 'teacher_form_screen.dart';
@@ -16,20 +17,26 @@ class ClassCreateScreen extends StatefulWidget {
 
 class _ClassCreateScreenState extends State<ClassCreateScreen> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _nameController;
+  final _sectionController = TextEditingController();
+  int? _gradeLevel;
   String? _homeroomTeacherId;
   bool _saving = false;
 
   @override
-  void initState() {
-    super.initState();
-    _nameController = TextEditingController();
+  void dispose() {
+    _sectionController.dispose();
+    super.dispose();
   }
 
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
+  String get _previewName {
+    final grade = _gradeLevel;
+    if (grade == null) return 'Ангийн нэр';
+    final section = ClassNaming.normalizeSection(_sectionController.text);
+    try {
+      return ClassNaming.displayName(gradeLevel: grade, section: section);
+    } catch (_) {
+      return ClassNaming.gradeLevelLabel(grade);
+    }
   }
 
   Future<void> _openAddTeacher() async {
@@ -45,11 +52,14 @@ class _ClassCreateScreenState extends State<ClassCreateScreen> {
   Future<void> _save() async {
     if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
+    final grade = _gradeLevel;
+    if (grade == null) return;
 
     setState(() => _saving = true);
     try {
       await widget.store.addSchoolClass(
-        name: _nameController.text,
+        gradeLevel: grade,
+        section: _sectionController.text,
         homeroomTeacherId: _homeroomTeacherId,
       );
       if (!mounted) return;
@@ -57,7 +67,9 @@ class _ClassCreateScreenState extends State<ClassCreateScreen> {
     } on ArgumentError catch (e) {
       if (!mounted) return;
       final message = switch (e.message) {
-        'EMPTY_CLASS' => 'Ангийн нэрээ оруулна уу',
+        'EMPTY_CLASS' => 'Ангийн түвшингээ сонгоно уу',
+        'INVALID_GRADE_LEVEL' => 'Анги 1–12 байх ёстой',
+        'INVALID_SECTION' => 'Ангийн бүлэг буруу байна',
         'DUPLICATE_CLASS' => 'Ийм анги аль хэдийн байна',
         _ => 'Анги нэмэхэд алдаа гарлаа',
       };
@@ -77,6 +89,7 @@ class _ClassCreateScreenState extends State<ClassCreateScreen> {
   @override
   Widget build(BuildContext context) {
     final teachers = widget.store.activeTeachers;
+    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Анги нэмэх'), centerTitle: true),
@@ -85,21 +98,53 @@ class _ClassCreateScreenState extends State<ClassCreateScreen> {
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.page),
           children: [
-            TextFormField(
-              controller: _nameController,
-              autofocus: true,
-              textInputAction: TextInputAction.next,
+            DropdownButtonFormField<int>(
+              initialValue: _gradeLevel,
+              isExpanded: true,
               decoration: const InputDecoration(
-                labelText: 'Ангийн нэр',
-                hintText: 'ж: 6А',
+                labelText: 'Ангийн түвшин',
                 border: OutlineInputBorder(),
               ),
+              hint: const Text('Анги сонгох'),
+              items: [
+                for (final grade in ClassNaming.gradeLevels)
+                  DropdownMenuItem<int>(
+                    value: grade,
+                    child: Text(ClassNaming.gradeLevelLabel(grade)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _gradeLevel = value);
+                    },
               validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Ангийн нэрээ оруулна уу';
+                if (value == null) return 'Ангийн түвшингээ сонгоно уу';
+                if (!ClassNaming.isValidGradeLevel(value)) {
+                  return 'Анги 1–12 байх ёстой';
                 }
                 return null;
               },
+            ),
+            const SizedBox(height: AppSpacing.gap),
+            TextFormField(
+              controller: _sectionController,
+              enabled: !_saving,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                labelText: 'Бүлэг (заавал биш)',
+                hintText: 'ж: а, б, в',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(() {}),
+              validator: (value) => ClassNaming.validateSectionInput(value),
+            ),
+            const SizedBox(height: AppSpacing.item),
+            Text(
+              'Нэр: $_previewName',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: AppSpacing.gap),
             if (teachers.isEmpty) ...[

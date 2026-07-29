@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/attendance_record.dart';
 import '../models/homework.dart';
+import '../services/app_clock.dart';
 import '../state/app_store.dart';
 import '../theme/app_colors.dart';
 
@@ -62,10 +63,10 @@ class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
       final parsedDate = AttendanceRecord.tryParseCalendarDate(
         existing.dueDate,
       );
-      _selectedDate = parsedDate ?? DateTime.now();
+      _selectedDate = parsedDate ?? AppClock.today();
       _selectedSubject = existing.subject;
     } else {
-      _selectedDate = DateTime.now();
+      _selectedDate = AppClock.today();
       _dueDateController.text = _formatMongolianDate(_selectedDate);
       final initial = widget.initialSubject;
       if (initial != null &&
@@ -86,11 +87,11 @@ class _HomeworkCreateScreenState extends State<HomeworkCreateScreen> {
   }
 
   String _formatMongolianDate(DateTime date) {
-    return '${date.year} оны ${date.month} сарын ${date.day}';
+    return AppClock.mongolianLabel(date);
   }
 
   Future<void> _pickDueDate() async {
-    final now = DateTime.now();
+    final now = AppClock.today();
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,

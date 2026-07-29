@@ -62,20 +62,12 @@ LearnerTimelineData _build(
   Student student, {
   required bool forGuardian,
 }) {
-  final attendanceRows = store.attendanceEntriesForStudent(student);
-  var present = 0;
-  var late = 0;
-  var absent = 0;
-  for (final row in attendanceRows) {
-    switch (row.status) {
-      case AttendanceStatus.present:
-        present++;
-      case AttendanceStatus.late:
-        late++;
-      case AttendanceStatus.absent:
-        absent++;
-    }
-  }
+  // Dashboard "Өнөөдрийн ирц" stats are today-only (never historical fallback).
+  final today = store.todaysAttendanceForStudent(student);
+  final todayStatus = today?.status;
+  final present = todayStatus == AttendanceStatus.present ? 1 : 0;
+  final late = todayStatus == AttendanceStatus.late ? 1 : 0;
+  final absent = todayStatus == AttendanceStatus.absent ? 1 : 0;
 
   final dueSoon = store
       .homeworkForStudentClass(student)
@@ -93,7 +85,7 @@ LearnerTimelineData _build(
 
   return LearnerTimelineData(
     student: student,
-    todaysAttendance: store.todaysAttendanceStatus(student),
+    todaysAttendance: todayStatus,
     averageGrade: store.averageGradeForStudent(student),
     dueSoonHomework: dueSoon,
     latestAnnouncement: latest,

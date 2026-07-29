@@ -53,13 +53,33 @@ class AttendanceScreen extends StatelessWidget {
     String action,
   ) async {
     if (action == 'edit') {
+      if (!store.canEditAttendanceRecord(record)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordOwnOnlyMessage)),
+        );
+        return;
+      }
       await _openTakeScreen(context, existing: record);
       return;
     }
     if (action == 'delete') {
+      if (!store.canDeleteAttendanceRecord(record)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordDeleteDeniedMessage)),
+        );
+        return;
+      }
       final ok = await confirmDelete(context);
       if (!ok) return;
-      await store.deleteAttendance(selectedClass, record.id);
+      try {
+        await store.deleteAttendance(selectedClass, record.id);
+      } on PermissionDeniedException catch (e) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+        return;
+      }
       if (!context.mounted) return;
       showDeletedSnackBar(context);
     }
@@ -69,21 +89,32 @@ class AttendanceScreen extends StatelessWidget {
     BuildContext context,
     AttendanceRecord record,
   ) async {
-    final action = await showEditDeleteMenu(context);
+    final canEdit = store.canEditAttendanceRecord(record);
+    final canDelete = store.canDeleteAttendanceRecord(record);
+    if (!canEdit && !canDelete) return;
+    final action = await showEditDeleteMenu(
+      context,
+      canEdit: canEdit,
+      canDelete: canDelete,
+    );
     if (action == null || !context.mounted) return;
     await _onMenuSelected(context, record, action);
   }
 
   Widget _menu(BuildContext context, AttendanceRecord record) {
-    if (!store.teacherCanWriteAttendance(selectedClass)) {
+    final canEdit = store.canEditAttendanceRecord(record);
+    final canDelete = store.canDeleteAttendanceRecord(record);
+    if (!canEdit && !canDelete) {
       return const SizedBox.shrink();
     }
     return PopupMenuButton<String>(
       tooltip: 'Цэс',
       onSelected: (value) => _onMenuSelected(context, record, value),
-      itemBuilder: (context) => const [
-        PopupMenuItem(value: 'edit', child: Text('✏️ Засах')),
-        PopupMenuItem(value: 'delete', child: Text('🗑 Устгах')),
+      itemBuilder: (context) => [
+        if (canEdit)
+          const PopupMenuItem(value: 'edit', child: Text('✏️ Засах')),
+        if (canDelete)
+          const PopupMenuItem(value: 'delete', child: Text('🗑 Устгах')),
       ],
     );
   }

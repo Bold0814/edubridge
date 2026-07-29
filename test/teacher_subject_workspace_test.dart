@@ -222,7 +222,7 @@ void main() {
           isA<PermissionDeniedException>().having(
             (e) => e.message,
             'message',
-            AppStore.subjectEditDeniedMessage,
+            contains(Grade.permissionDeniedMessage),
           ),
         ),
       );

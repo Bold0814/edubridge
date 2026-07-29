@@ -207,20 +207,24 @@ void main() {
   });
 
   testWidgets('periods and guardians remain in Settings', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: SettingsScreen(store: store)));
-    await tester.pump();
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
 
+    await tester.pumpWidget(MaterialApp(home: SettingsScreen(store: store)));
+    await tester.pumpAndSettle();
+
+    final scrollable = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(
       find.text('Хичээлийн цаг'),
-      300,
-      scrollable: find.byType(Scrollable).first,
+      400,
+      scrollable: scrollable,
     );
     expect(find.text('Хичээлийн цаг'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.text('Асран хамгаалагчийн холбоос засах'),
-      300,
-      scrollable: find.byType(Scrollable).first,
+      400,
+      scrollable: scrollable,
     );
     expect(find.text('Асран хамгаалагчийн холбоос засах'), findsOneWidget);
 

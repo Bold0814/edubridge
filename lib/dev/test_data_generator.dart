@@ -13,6 +13,7 @@ import '../models/subject.dart';
 import '../models/teacher.dart';
 import '../models/user_account.dart';
 import '../repositories/edubridge_repository.dart';
+import '../services/app_clock.dart';
 import '../services/password_hasher.dart';
 import '../state/app_store.dart';
 
@@ -148,7 +149,7 @@ class TestDataGenerator {
   /// Yields to the event loop so Flutter can paint progress updates.
   Future<void> _yieldUi() => Future<void>.delayed(Duration.zero);
 
-  String _formatDate(DateTime d) => '${d.year} оны ${d.month} сарын ${d.day}';
+  String _formatDate(DateTime d) => AppClock.mongolianLabel(d);
 
   String _padRegister(int n) => 'TEST${n.toString().padLeft(6, '0')}';
 
@@ -393,7 +394,6 @@ class TestDataGenerator {
       byClass.putIfAbsent(s.className, () => []).add(s);
     }
 
-    final now = DateTime.now();
     final records = <AttendanceRecord>[];
     var entryCount = 0;
     var recordIndex = 0;
@@ -404,7 +404,8 @@ class TestDataGenerator {
 
       for (var day = 0; day < attendanceDaysPerClass; day++) {
         recordIndex++;
-        final date = now.subtract(Duration(days: day + 1));
+        final date = AppClock.today().subtract(Duration(days: day));
+        final dateKey = AppClock.formatDateKey(date);
         final entries = classStudents.map((s) {
           final roll = _random.nextInt(10);
           final status = roll < 7
@@ -423,7 +424,10 @@ class TestDataGenerator {
           AttendanceRecord.detailed(
             id: 'TEST-ATT-${recordIndex.toString().padLeft(6, '0')}',
             date: _formatDate(date),
+            dateKey: dateKey,
+            schoolId: AppStore.defaultSchoolId,
             className: className,
+            recordedAt: date,
             entries: entries,
           ),
         );
@@ -515,7 +519,7 @@ class TestDataGenerator {
 
     // --- Homework ---
     onProgress?.call('Даалгавар үүсгэж байна…', 0.72);
-    final now = DateTime.now();
+    final now = AppClock.today();
     final homework = <Homework>[];
     var hwIndex = 0;
     for (final className in classes) {

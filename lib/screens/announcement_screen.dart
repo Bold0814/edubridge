@@ -57,20 +57,47 @@ class AnnouncementScreen extends StatelessWidget {
     String action,
   ) async {
     if (action == 'edit') {
+      if (!store.canEditAnnouncement(item)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordOwnOnlyMessage)),
+        );
+        return;
+      }
       await _openCreateScreen(context, existing: item);
       return;
     }
     if (action == 'delete') {
+      if (!store.canDeleteAnnouncement(item)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordDeleteDeniedMessage)),
+        );
+        return;
+      }
       final ok = await confirmDelete(context);
       if (!ok) return;
-      await store.deleteAnnouncement(item.id);
+      try {
+        await store.deleteAnnouncement(item.id);
+      } on PermissionDeniedException catch (e) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+        return;
+      }
       if (!context.mounted) return;
       showDeletedSnackBar(context);
     }
   }
 
   Future<void> _onLongPress(BuildContext context, Announcement item) async {
-    final action = await showEditDeleteMenu(context);
+    final canEdit = store.canEditAnnouncement(item);
+    final canDelete = store.canDeleteAnnouncement(item);
+    if (!canEdit && !canDelete) return;
+    final action = await showEditDeleteMenu(
+      context,
+      canEdit: canEdit,
+      canDelete: canDelete,
+    );
     if (action == null || !context.mounted) return;
     await _onMenuSelected(context, item, action);
   }
@@ -195,20 +222,37 @@ class AnnouncementScreen extends StatelessWidget {
                                     ],
                                   ),
                                 ),
-                                PopupMenuButton<String>(
-                                  tooltip: 'Цэс',
-                                  onSelected: (value) =>
-                                      _onMenuSelected(context, item, value),
-                                  itemBuilder: (context) => const [
-                                    PopupMenuItem(
-                                      value: 'edit',
-                                      child: Text('✏️ Засах'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'delete',
-                                      child: Text('🗑 Устгах'),
-                                    ),
-                                  ],
+                                Builder(
+                                  builder: (context) {
+                                    final canEdit = store.canEditAnnouncement(
+                                      item,
+                                    );
+                                    final canDelete = store
+                                        .canDeleteAnnouncement(item);
+                                    if (!canEdit && !canDelete) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    return PopupMenuButton<String>(
+                                      tooltip: 'Цэс',
+                                      onSelected: (value) => _onMenuSelected(
+                                        context,
+                                        item,
+                                        value,
+                                      ),
+                                      itemBuilder: (context) => [
+                                        if (canEdit)
+                                          const PopupMenuItem(
+                                            value: 'edit',
+                                            child: Text('✏️ Засах'),
+                                          ),
+                                        if (canDelete)
+                                          const PopupMenuItem(
+                                            value: 'delete',
+                                            child: Text('🗑 Устгах'),
+                                          ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ],
                             ),

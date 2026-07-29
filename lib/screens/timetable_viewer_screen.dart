@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/timetable.dart';
+import '../services/app_clock.dart';
 import '../services/timetable_service.dart';
 import '../state/app_store.dart';
 import '../theme/app_colors.dart';
@@ -163,7 +164,7 @@ class _TodayBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final weekday = DateTime.now().weekday;
+    final weekday = AppClock.today().weekday;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -177,7 +178,9 @@ class _TodayBody extends StatelessWidget {
         const SizedBox(height: AppSpacing.gap),
         if (lessons.isEmpty)
           Text(
-            'Өнөөдөр хичээл байхгүй',
+            showClass
+                ? ResolvedLesson.emptyTeacherTodayMessage
+                : ResolvedLesson.emptyClassTodayMessage,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -271,10 +274,6 @@ class _LessonTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final subtitleParts = <String>[
-      if (showClass) lesson.classId,
-      if (showTeacher && lesson.teacher != null) lesson.teacher!.fullName,
-    ];
 
     return Card(
       child: ListTile(
@@ -283,24 +282,26 @@ class _LessonTile extends StatelessWidget {
           vertical: AppSpacing.itemSm,
         ),
         title: Text(
-          '${lesson.period.periodNumber}. ${lesson.subjectName}',
+          lesson.scheduleHeading,
           style: theme.textTheme.titleSmall?.copyWith(
             fontWeight: FontWeight.w700,
+            color: AppColors.primary,
           ),
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              lesson.timeLabel,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: AppColors.primary,
+              showClass
+                  ? '${lesson.classId} · ${lesson.subjectName}'
+                  : lesson.subjectName,
+              style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
             ),
-            if (subtitleParts.isNotEmpty)
+            if (showTeacher && lesson.teacher != null)
               Text(
-                subtitleParts.join(' · '),
+                'Багш: ${lesson.teacher!.fullName}',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

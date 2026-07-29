@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/teacher_note.dart';
+import '../services/app_clock.dart';
 import '../state/app_store.dart';
 
 class TeacherNoteFormScreen extends StatefulWidget {
@@ -65,9 +66,7 @@ class _TeacherNoteFormScreenState extends State<TeacherNoteFormScreen> {
       return;
     }
 
-    final teacherId =
-        widget.existing?.teacherId ??
-        widget.store.resolveAuthorTeacherId(widget.className);
+    final teacherId = widget.store.activeContext.teacherId;
     if (teacherId == null || teacherId.isEmpty) {
       setState(
         () => _error = 'Багш олдсонгүй. Эхлээд багш бүртгэж, ангид холбоно уу.',
@@ -81,20 +80,29 @@ class _TeacherNoteFormScreenState extends State<TeacherNoteFormScreen> {
     final note = TeacherNote(
       id: existing?.id ?? widget.store.nextTeacherNoteId(),
       studentId: studentId,
-      teacherId: teacherId,
+      teacherId: existing?.teacherId ?? teacherId,
       subjectId: _subjectId,
-      createdAt: existing?.createdAt ?? DateTime.now().toIso8601String(),
+      createdAt: existing?.createdAt ?? AppClock.now().toIso8601String(),
       title: _titleController.text.trim(),
       message: _messageController.text.trim(),
       priority: _priority,
       isVisibleToGuardian: _visibleToGuardian,
       isVisibleToStudent: _visibleToStudent,
+      schoolId: existing?.schoolId ?? widget.store.activeSchoolId,
+      classId: widget.className,
+      createdByUid: existing?.createdByUid,
     );
 
-    if (existing != null) {
-      await widget.store.updateTeacherNote(note);
-    } else {
-      await widget.store.addTeacherNote(note);
+    try {
+      if (existing != null) {
+        await widget.store.updateTeacherNote(note);
+      } else {
+        await widget.store.addTeacherNote(note);
+      }
+    } on PermissionDeniedException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message);
+      return;
     }
 
     if (!mounted) return;

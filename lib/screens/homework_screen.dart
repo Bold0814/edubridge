@@ -78,22 +78,23 @@ class HomeworkScreen extends StatelessWidget {
       await _openStatus(context, item);
       return;
     }
-    if (action == 'edit' || action == 'delete') {
-      if (!store.teacherCanEditSubjectNamed(
-        classId: selectedClass,
-        subjectName: item.subject,
-      )) {
+    if (action == 'edit') {
+      if (!store.canEditHomeworkRecord(item)) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text(AppStore.subjectEditDeniedMessage)),
+          const SnackBar(content: Text(AppStore.recordOwnOnlyMessage)),
         );
         return;
       }
-    }
-    if (action == 'edit') {
       await _openCreateScreen(context, existing: item);
       return;
     }
     if (action == 'delete') {
+      if (!store.canDeleteHomeworkRecord(item)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordDeleteDeniedMessage)),
+        );
+        return;
+      }
       final ok = await confirmDelete(context);
       if (!ok) return;
       try {
@@ -111,6 +112,8 @@ class HomeworkScreen extends StatelessWidget {
   }
 
   Future<void> _onLongPress(BuildContext context, Homework item) async {
+    final canEdit = store.canEditHomeworkRecord(item);
+    final canDelete = store.canDeleteHomeworkRecord(item);
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (sheetContext) {
@@ -123,16 +126,18 @@ class HomeworkScreen extends StatelessWidget {
                 title: const Text('Гүйцэтгэл'),
                 onTap: () => Navigator.pop(sheetContext, 'status'),
               ),
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('Засах'),
-                onTap: () => Navigator.pop(sheetContext, 'edit'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: const Text('Устгах'),
-                onTap: () => Navigator.pop(sheetContext, 'delete'),
-              ),
+              if (canEdit)
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Засах'),
+                  onTap: () => Navigator.pop(sheetContext, 'edit'),
+                ),
+              if (canDelete)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline),
+                  title: const Text('Устгах'),
+                  onTap: () => Navigator.pop(sheetContext, 'delete'),
+                ),
             ],
           ),
         );
@@ -252,24 +257,38 @@ class HomeworkScreen extends StatelessWidget {
                                     ],
                                   ),
                                 ),
-                                PopupMenuButton<String>(
-                                  tooltip: 'Цэс',
-                                  onSelected: (value) =>
-                                      _onMenuSelected(context, item, value),
-                                  itemBuilder: (context) => const [
-                                    PopupMenuItem(
-                                      value: 'status',
-                                      child: Text('Гүйцэтгэл'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'edit',
-                                      child: Text('✏️ Засах'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'delete',
-                                      child: Text('🗑 Устгах'),
-                                    ),
-                                  ],
+                                Builder(
+                                  builder: (context) {
+                                    final canEdit = store.canEditHomeworkRecord(
+                                      item,
+                                    );
+                                    final canDelete = store
+                                        .canDeleteHomeworkRecord(item);
+                                    return PopupMenuButton<String>(
+                                      tooltip: 'Цэс',
+                                      onSelected: (value) => _onMenuSelected(
+                                        context,
+                                        item,
+                                        value,
+                                      ),
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem(
+                                          value: 'status',
+                                          child: Text('Гүйцэтгэл'),
+                                        ),
+                                        if (canEdit)
+                                          const PopupMenuItem(
+                                            value: 'edit',
+                                            child: Text('✏️ Засах'),
+                                          ),
+                                        if (canDelete)
+                                          const PopupMenuItem(
+                                            value: 'delete',
+                                            child: Text('🗑 Устгах'),
+                                          ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ],
                             ),

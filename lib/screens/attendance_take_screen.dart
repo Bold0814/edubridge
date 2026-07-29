@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../models/attendance_record.dart';
+import '../models/lesson_occurrence.dart';
 import '../models/student.dart';
+import '../services/app_clock.dart';
+import '../services/school_date.dart';
 import '../state/app_store.dart';
 
 class AttendanceTakeScreen extends StatefulWidget {
@@ -11,6 +14,7 @@ class AttendanceTakeScreen extends StatefulWidget {
     required this.store,
     this.existing,
     this.lessonDate,
+    this.subjectId,
   });
 
   final String selectedClass;
@@ -20,12 +24,16 @@ class AttendanceTakeScreen extends StatefulWidget {
   /// When set (from journal), attendance is stored for this calendar day.
   final DateTime? lessonDate;
 
+  /// Teaching subject for uniqueness (school/class/subject/dateKey).
+  final int? subjectId;
+
   @override
   State<AttendanceTakeScreen> createState() => _AttendanceTakeScreenState();
 }
 
 class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
   final Map<String, AttendanceStatus> _statuses = {};
+  final Map<String, String> _notes = {};
 
   List<Student> get _students => widget.store.studentsFor(widget.selectedClass);
 
@@ -33,12 +41,26 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
   void initState() {
     super.initState();
     _syncStatuses();
-    final existing = widget.existing;
+    final existing =
+        widget.existing ??
+        widget.store.findAttendanceRoll(
+          className: widget.selectedClass,
+          subjectId: widget.subjectId ?? widget.store.activeContext.subjectId,
+          dateKey: _dateKey,
+        );
     if (existing != null && existing.hasStudentDetails) {
       for (final entry in existing.entries!) {
         for (final student in _students) {
-          if (student.fullName == entry.studentName) {
+          final idMatch =
+              entry.studentId != null &&
+              entry.studentId!.isNotEmpty &&
+              entry.studentId == student.id;
+          if (idMatch || student.fullName == entry.studentName) {
             _statuses[student.id] = entry.status;
+            final note = entry.normalizedNote;
+            if (note != null) {
+              _notes[student.id] = note;
+            }
           }
         }
       }
@@ -66,11 +88,38 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
     );
   }
 
+  int? get _subjectId =>
+      widget.subjectId ?? widget.store.activeContext.subjectId;
+
+  AttendanceRecord? get _resolvedExisting {
+    if (widget.existing != null) return widget.existing;
+    final key = _dateKey;
+    return widget.store.findAttendanceRoll(
+      className: widget.selectedClass,
+      subjectId: _subjectId,
+      dateKey: key,
+    );
+  }
+
   String get _dateLabel {
+    final existing = _resolvedExisting;
+    if (existing != null) return existing.displayDateLabel;
+    return SchoolDate.displayLabel(_dateKey);
+  }
+
+  String get _dateKey {
     final existing = widget.existing;
-    if (existing != null) return existing.date;
-    final day = widget.lessonDate ?? DateTime.now();
-    return '${day.year} оны ${day.month} сарын ${day.day}';
+    if (existing?.dateKey != null && existing!.dateKey!.trim().isNotEmpty) {
+      return existing.dateKey!.trim();
+    }
+    if (existing != null) {
+      final resolved = existing.resolvedDateKey;
+      if (resolved != null) return resolved;
+    }
+    final day = widget.lessonDate != null
+        ? LessonOccurrence.dateOnly(widget.lessonDate!)
+        : AppClock.today();
+    return AppClock.formatDateKey(day);
   }
 
   int get _presentCount {
@@ -108,6 +157,28 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
     setState(() => _statuses[student.id] = status);
   }
 
+  bool _hasNote(String studentId) {
+    final note = _notes[studentId]?.trim();
+    return note != null && note.isNotEmpty;
+  }
+
+  Future<void> _editNote(Student student) async {
+    final initial = _notes[student.id] ?? '';
+    final saved = await showDialog<String?>(
+      context: context,
+      builder: (context) => _AttendanceNoteDialog(initialText: initial),
+    );
+    if (!mounted || saved == null) return;
+    setState(() {
+      final trimmed = saved.trim();
+      if (trimmed.isEmpty) {
+        _notes.remove(student.id);
+      } else {
+        _notes[student.id] = trimmed;
+      }
+    });
+  }
+
   Future<void> _saveAttendance() async {
     final students = _students;
     if (students.isEmpty) {
@@ -127,29 +198,45 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
       return;
     }
 
-    final entries = students
-        .map(
-          (student) => StudentAttendanceEntry(
-            studentName: student.fullName,
-            status: _statuses[student.id] ?? AttendanceStatus.present,
-          ),
-        )
-        .toList();
+    final entries = students.map((student) {
+      final rawNote = _notes[student.id]?.trim();
+      return StudentAttendanceEntry(
+        studentId: student.id,
+        studentName: student.fullName,
+        status: _statuses[student.id] ?? AttendanceStatus.present,
+        note: (rawNote == null || rawNote.isEmpty) ? null : rawNote,
+      );
+    }).toList();
 
-    final existing = widget.existing;
+    final existing = _resolvedExisting;
     final record = AttendanceRecord.detailed(
-      id: existing?.id ?? widget.store.nextAttendanceId(),
+      id: widget.store.nextAttendanceId(),
       date: _dateLabel,
+      dateKey: _dateKey,
+      schoolId:
+          widget.store.activeSchoolId ??
+          existing?.schoolId ??
+          AppStore.defaultSchoolId,
       className: widget.selectedClass,
+      subjectId: _subjectId,
+      recordedAt: AppClock.now(),
+      recordedByTeacherId:
+          widget.store.activeContext.teacherId ??
+          widget.store.authenticatedUser?.teacherId,
       entries: entries,
     );
 
+    AppClock.debugLogSchoolDates(
+      journalDateKey: widget.lessonDate != null
+          ? AppClock.formatDateKey(
+              LessonOccurrence.dateOnly(widget.lessonDate!),
+            )
+          : AppClock.todayKey(),
+      attendanceDateKey: _dateKey,
+    );
+
     try {
-      if (existing != null) {
-        await widget.store.updateAttendance(record);
-      } else {
-        await widget.store.addAttendance(widget.selectedClass, record);
-      }
+      await widget.store.saveAttendance(record);
     } on PermissionDeniedException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -172,7 +259,7 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.existing != null ? 'Ирц засах' : 'Өнөөдрийн ирц'),
+        title: Text(_resolvedExisting != null ? 'Ирц засах' : 'Өнөөдрийн ирц'),
         centerTitle: true,
       ),
       body: Column(
@@ -226,11 +313,30 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                student.fullName,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      student.fullName,
+                                      style: theme.textTheme.titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Тэмдэглэл',
+                                    onPressed: () => _editNote(student),
+                                    icon: Icon(
+                                      _hasNote(student.id)
+                                          ? Icons.edit_note
+                                          : Icons.edit_outlined,
+                                      color: _hasNote(student.id)
+                                          ? theme.colorScheme.primary
+                                          : theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 10),
                               Wrap(
@@ -323,6 +429,61 @@ class _AttendanceTakeScreenState extends State<AttendanceTakeScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AttendanceNoteDialog extends StatefulWidget {
+  const _AttendanceNoteDialog({required this.initialText});
+
+  final String initialText;
+
+  @override
+  State<_AttendanceNoteDialog> createState() => _AttendanceNoteDialogState();
+}
+
+class _AttendanceNoteDialogState extends State<_AttendanceNoteDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Ирцийн тэмдэглэл'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLines: 3,
+        minLines: 2,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(
+          labelText: 'Тэмдэглэл',
+          hintText:
+              'Жишээ: Эмчид үзүүлээд ирсэн, Автобус хоцорсон, Эцэг эхээс чөлөө авсан',
+          alignLabelWithHint: true,
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Болих'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: const Text('Хадгалах'),
+        ),
+      ],
     );
   }
 }

@@ -4,6 +4,7 @@ import '../models/attendance_record.dart';
 import '../models/grade.dart';
 import '../models/homework.dart';
 import '../models/lesson_occurrence.dart';
+import '../services/app_clock.dart';
 import '../services/journal_schedule_service.dart';
 import '../state/app_store.dart';
 import '../theme/app_colors.dart';
@@ -51,9 +52,10 @@ class _ClassJournalScreenState extends State<ClassJournalScreen> {
       widget.store.authenticatedUser?.teacherId;
 
   /// Wall clock, or [ClassJournalScreen.initialDate] when opening a fixed day.
-  DateTime get _referenceNow => widget.initialDate ?? DateTime.now();
+  DateTime get _referenceNow =>
+      widget.initialDate ?? AppClock.nowInUlaanbaatar();
 
-  DateTime get _today => LessonOccurrence.dateOnly(_referenceNow);
+  DateTime get _today => AppClock.today(widget.initialDate);
 
   bool get _canEdit {
     final subjectId = _subjectId;
@@ -105,7 +107,7 @@ class _ClassJournalScreenState extends State<ClassJournalScreen> {
         classId: widget.selectedClass,
         subjectId: subjectId,
         teacherId: _teacherId,
-        around: widget.initialDate ?? DateTime.now(),
+        around: widget.initialDate ?? AppClock.today(),
       ),
     );
 
@@ -134,6 +136,13 @@ class _ClassJournalScreenState extends State<ClassJournalScreen> {
         ? null
         : 'Өнөөдөр энэ хичээл хуваарьгүй байна.';
 
+    AppClock.debugLogSchoolDates(
+      journalDateKey: selected != null
+          ? AppClock.formatDateKey(selected.lessonDate)
+          : AppClock.todayKey(),
+      attendanceDateKey: AppClock.todayKey(),
+    );
+
     setState(() {
       _timeline = timeline;
       _current = selected;
@@ -141,7 +150,9 @@ class _ClassJournalScreenState extends State<ClassJournalScreen> {
       _loading = false;
     });
 
-    if (selected != null) {
+    // Only auto-create a journal row for today's (or explicitly opened) lesson.
+    if (selected != null &&
+        (widget.initialDate != null || selected.lessonDate == today)) {
       await _ensureCurrent(selected);
     }
   }
@@ -228,6 +239,14 @@ class _ClassJournalScreenState extends State<ClassJournalScreen> {
           selectedClass: widget.selectedClass,
           store: widget.store,
           lessonDate: lesson.lessonDate,
+          subjectId: lesson.subjectId,
+          existing: widget.store.findAttendanceRoll(
+            className: widget.selectedClass,
+            subjectId: lesson.subjectId,
+            dateKey: AppClock.formatDateKey(
+              LessonOccurrence.dateOnly(lesson.lessonDate),
+            ),
+          ),
         ),
       ),
     );

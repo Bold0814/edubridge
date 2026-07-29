@@ -35,7 +35,7 @@ class TodayTimetableCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.item),
             if (lessons.isEmpty)
               Text(
-                'Өнөөдөр хичээл байхгүй',
+                ResolvedLesson.emptyClassTodayMessage,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -44,23 +44,19 @@ class TodayTimetableCard extends StatelessWidget {
               ...lessons.map((lesson) {
                 return Padding(
                   padding: const EdgeInsets.only(top: AppSpacing.item),
-                  child: Row(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SizedBox(
-                        width: 88,
-                        child: Text(
-                          lesson.timeLabel,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                      Text(
+                        lesson.scheduleHeading,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary,
                         ),
                       ),
-                      Expanded(
-                        child: Text(
-                          '${lesson.period.periodNumber}. ${lesson.subjectName}',
-                          style: theme.textTheme.bodyMedium,
-                        ),
+                      Text(
+                        lesson.subjectName,
+                        style: theme.textTheme.bodyMedium,
                       ),
                     ],
                   ),
@@ -93,6 +89,7 @@ class TeacherTodayLessonCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final teacherName = lesson.teacher?.fullName.trim();
 
     return Card(
       child: Padding(
@@ -101,7 +98,7 @@ class TeacherTodayLessonCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              lesson.timeLabel,
+              lesson.scheduleHeading,
               style: theme.textTheme.labelLarge?.copyWith(
                 color: AppColors.primary,
                 fontWeight: FontWeight.w700,
@@ -114,6 +111,15 @@ class TeacherTodayLessonCard extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
+            if (teacherName != null && teacherName.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                'Багш: $teacherName',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.item),
             Wrap(
               spacing: 8,

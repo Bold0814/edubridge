@@ -1,3 +1,5 @@
+import '../services/app_clock.dart';
+
 /// Per-school settings (academic year / semester / display name).
 class SchoolSettings {
   const SchoolSettings({
@@ -16,7 +18,7 @@ class SchoolSettings {
   ///
   /// Uses an en dash to match stored values (e.g. `2025–2026`).
   static String currentAcademicYear([DateTime? now]) {
-    final date = now ?? DateTime.now();
+    final date = now ?? AppClock.today();
     final year = date.year;
     if (date.month <= 7) {
       return '${year - 1}–$year';
@@ -26,7 +28,7 @@ class SchoolSettings {
 
   /// Dropdown options including the computed current year and nearby years.
   static List<String> get academicYearOptions {
-    final now = DateTime.now();
+    final now = AppClock.today();
     final baseStart = now.month <= 7 ? now.year - 2 : now.year - 1;
     final rolling = <String>[
       for (var i = 0; i < 5; i++) '${baseStart + i}–${baseStart + i + 1}',

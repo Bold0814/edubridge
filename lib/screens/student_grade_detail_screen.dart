@@ -2,17 +2,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/grade.dart';
+import '../models/school_settings.dart';
 import '../models/student.dart';
+import '../services/grade_average_calculator.dart';
 import '../state/app_store.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../widgets/confirm_delete.dart';
 import 'grade_create_screen.dart';
 
-/// Student grade detail: subject averages, or locked subject/term records.
+/// Student grades: LEVEL 2 subject averages, or LEVEL 3 subject history.
 ///
-/// Uses [AppStore.gradesForStudentContext] — the same filter as the student
-/// summary average. Source-of-truth student key: [Student.id].
+/// Does not skip to individual records from the class summary. Individual
+/// grade rows appear only when a subject is selected.
 class StudentGradeDetailScreen extends StatefulWidget {
   const StudentGradeDetailScreen({
     super.key,
@@ -44,105 +46,51 @@ enum _GradeLoadState { loading, ready, error }
 
 class _StudentGradeDetailScreenState extends State<StudentGradeDetailScreen> {
   _GradeLoadState _loadState = _GradeLoadState.loading;
+  late String _selectedTerm;
 
   int? get _subjectId {
     if (widget.subjectId != null) return widget.subjectId;
-    // An explicit subjectName from navigation must not be overridden by
-    // ambient ActiveAppContext.subjectId.
     final named = widget.subjectName?.trim();
-    if (named != null && named.isNotEmpty) return null;
-    return widget.store.activeContext.subjectId;
+    if (named != null && named.isNotEmpty) {
+      return widget.store.subjectByName(named)?.id;
+    }
+    return null;
   }
 
   String? get _subjectName {
-    if (_subjectId != null) {
-      return widget.store.subjectById(_subjectId!)?.name.trim();
+    final id = _subjectId;
+    if (id != null) {
+      return widget.store.subjectById(id)?.name.trim();
     }
     final named = widget.subjectName?.trim();
     if (named == null || named.isEmpty) return null;
     return named;
   }
 
-  String? get _term {
-    final t = widget.term?.trim();
-    if (t == null || t.isEmpty) return null;
-    return t;
-  }
-
-  bool get _showRecords {
-    final subject = _subjectName;
-    return subject != null && subject.isNotEmpty;
-  }
+  bool get _showRecords => _subjectId != null;
 
   String get _title {
-    final parts = <String>[widget.student.fullName];
-    final subject = _subjectName;
-    final term = _term;
-    if (subject != null) parts.add(subject);
-    if (term != null) parts.add(term);
-    return parts.join(' · ');
+    if (_showRecords) {
+      return '${_subjectName ?? ''} · $_selectedTerm';
+    }
+    return '${widget.student.fullName} · Дүн';
   }
 
   String get _emptyMessage {
-    if (_subjectName != null && _term != null) {
-      return 'Энэ хичээл, улиралд дүн бүртгээгүй байна';
+    if (_showRecords) {
+      return GradeAverageCalculator.emptySubjectHistoryMessage;
     }
-    if (_subjectName != null) {
-      return 'Энэ хичээлд дүн бүртгээгүй байна';
-    }
-    return 'Дүн бүртгээгүй байна';
-  }
-
-  List<Grade> _queryGrades() {
-    return widget.store.gradesForStudentContext(
-      className: widget.classId,
-      studentId: widget.student.id,
-      subjectId: _subjectId,
-      subjectName: _subjectId == null ? _subjectName : null,
-      term: _term,
-    );
-  }
-
-  void _logContext(List<Grade> grades) {
-    if (!kDebugMode) return;
-    debugPrint(
-      'StudentGradeDetail '
-      'schoolId=${widget.schoolId ?? widget.store.activeSchoolId} '
-      'classId=${widget.classId} '
-      'studentId=${widget.student.id} '
-      'subjectId=$_subjectId '
-      'subjectName=$_subjectName '
-      'term=$_term '
-      'teacherId=${widget.store.activeContext.teacherId} '
-      'matchCount=${grades.length}',
-    );
-    for (final g in grades.take(5)) {
-      debugPrint(
-        '  grade id=${g.id} studentId=${g.studentId} '
-        'subject=${g.subject} term=${g.term} score=${g.score}',
-      );
-    }
-    if (grades.isEmpty) {
-      final allForStudent = widget.store.gradesForStudentContext(
-        className: widget.classId,
-        studentId: widget.student.id,
-      );
-      debugPrint(
-        '  unfiltered student grades=${allForStudent.length} '
-        'subjects=${allForStudent.map((g) => g.subject).toSet()} '
-        'terms=${allForStudent.map((g) => g.term).toSet()}',
-      );
-    }
+    return GradeAverageCalculator.emptyTermMessage;
   }
 
   @override
   void initState() {
     super.initState();
+    _selectedTerm = _resolveInitialTerm(widget.term);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       try {
-        final grades = _queryGrades();
-        _logContext(grades);
+        _queryGrades();
         setState(() => _loadState = _GradeLoadState.ready);
       } catch (e, st) {
         if (kDebugMode) {
@@ -153,7 +101,38 @@ class _StudentGradeDetailScreenState extends State<StudentGradeDetailScreen> {
     });
   }
 
-  Future<void> _openCreate({Grade? existing, String? subjectName}) async {
+  String _resolveInitialTerm(String? preferred) {
+    final fromNav = preferred?.trim();
+    if (fromNav != null &&
+        fromNav.isNotEmpty &&
+        SchoolSettings.semesterOptions.contains(fromNav)) {
+      return fromNav;
+    }
+    final journal = widget.store.journalTermFor(widget.classId)?.trim();
+    if (journal != null &&
+        journal.isNotEmpty &&
+        SchoolSettings.semesterOptions.contains(journal)) {
+      return journal;
+    }
+    final current = widget.store.schoolSettings.currentSemester.trim();
+    if (current.isNotEmpty &&
+        SchoolSettings.semesterOptions.contains(current)) {
+      return current;
+    }
+    return SchoolSettings.semesterOptions.first;
+  }
+
+  List<Grade> _queryGrades() {
+    return widget.store.gradesForStudentContext(
+      className: widget.classId,
+      studentId: widget.student.id,
+      subjectId: _subjectId,
+      term: _selectedTerm,
+      schoolId: widget.schoolId ?? widget.store.activeSchoolId,
+    );
+  }
+
+  Future<void> _openCreate({Grade? existing}) async {
     final result = await Navigator.push<Grade>(
       context,
       MaterialPageRoute(
@@ -162,18 +141,20 @@ class _StudentGradeDetailScreenState extends State<StudentGradeDetailScreen> {
           store: widget.store,
           existing: existing,
           initialStudent: widget.student,
-          initialSubject: existing?.subject ?? subjectName ?? _subjectName,
-          initialTerm: existing?.term ?? _term,
+          initialSubject: existing?.subject ?? _subjectName,
+          initialTerm: existing?.term ?? _selectedTerm,
+          lockSubject: _subjectId != null,
         ),
       ),
     );
     if (!context.mounted) return;
-    if (result != null) {
-      setState(() {});
-    }
+    if (result != null) setState(() {});
   }
 
-  Future<void> _openSubjectRecords(String subjectName) async {
+  Future<void> _openSubjectRecords({
+    required int subjectId,
+    required String subjectName,
+  }) async {
     await Navigator.push<void>(
       context,
       MaterialPageRoute(
@@ -182,28 +163,58 @@ class _StudentGradeDetailScreenState extends State<StudentGradeDetailScreen> {
           student: widget.student,
           schoolId: widget.schoolId ?? widget.store.activeSchoolId,
           classId: widget.classId,
+          subjectId: subjectId,
           subjectName: subjectName,
-          term: _term,
+          term: _selectedTerm,
         ),
       ),
     );
-    if (!context.mounted) return;
+    if (!mounted) return;
     setState(() {});
   }
 
   Future<void> _onMenuSelected(Grade item, String action) async {
     if (action == 'edit') {
-      await _openCreate(existing: item, subjectName: item.subject);
+      if (!widget.store.canEditGradeRecord(item)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordOwnOnlyMessage)),
+        );
+        return;
+      }
+      await _openCreate(existing: item);
       return;
     }
     if (action == 'delete') {
+      if (!widget.store.canDeleteGradeRecord(item)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStore.recordDeleteDeniedMessage)),
+        );
+        return;
+      }
       final ok = await confirmDelete(context);
       if (!ok || !mounted) return;
-      await widget.store.deleteGrade(item.id);
+      try {
+        await widget.store.deleteGrade(item.id);
+      } on PermissionDeniedException catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+        return;
+      }
       if (!mounted) return;
       showDeletedSnackBar(context);
       setState(() {});
     }
+  }
+
+  bool get _canEditSubject {
+    final subjectId = _subjectId;
+    if (subjectId == null) return false;
+    return widget.store.teacherCanEditClassSubject(
+      classId: widget.classId,
+      subjectId: subjectId,
+    );
   }
 
   @override
@@ -212,20 +223,15 @@ class _StudentGradeDetailScreenState extends State<StudentGradeDetailScreen> {
       listenable: widget.store,
       builder: (context, _) {
         final grades = _loadState == _GradeLoadState.ready
-            ? _queryGrades()
+            ? GradeAverageCalculator.sortNewestFirst(_queryGrades())
             : const <Grade>[];
 
         return Scaffold(
           appBar: AppBar(title: Text(_title), centerTitle: true),
-          floatingActionButton:
-              widget.store.teacherCanEditActiveSubjectInClass(widget.classId)
+          // Entry FAB only on LEVEL 3 when the teacher may edit that subject.
+          floatingActionButton: _showRecords && _canEditSubject
               ? FloatingActionButton(
-                  onPressed: () => _openCreate(
-                    subjectName: _showRecords
-                        ? _subjectName
-                        : widget.store.activeSubjectName ??
-                              widget.store.journalSubjectFor(widget.classId),
-                  ),
+                  onPressed: () => _openCreate(),
                   tooltip: 'Дүн оруулах',
                   child: const Icon(Icons.add),
                 )
@@ -246,24 +252,56 @@ class _StudentGradeDetailScreenState extends State<StudentGradeDetailScreen> {
                 ),
               ),
             ),
-            _GradeLoadState.ready =>
-              _showRecords
-                  ? _GradeRecordsBody(
-                      grades: grades,
-                      emptyMessage: _emptyMessage,
-                      onEdit: (grade) => _openCreate(
-                        existing: grade,
-                        subjectName: _subjectName,
-                      ),
-                      onMenu: _onMenuSelected,
-                    )
-                  : _SubjectAveragesBody(
-                      store: widget.store,
-                      selectedClass: widget.classId,
-                      student: widget.student,
-                      term: _term,
-                      onSubjectTap: _openSubjectRecords,
+            _GradeLoadState.ready => Column(
+              children: [
+                if (!_showRecords)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.page,
+                      AppSpacing.page,
+                      AppSpacing.page,
+                      0,
                     ),
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _selectedTerm,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Улирал',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        for (final term in SchoolSettings.semesterOptions)
+                          DropdownMenuItem(value: term, child: Text(term)),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _selectedTerm = value);
+                        widget.store.setJournalTerm(widget.classId, value);
+                      },
+                    ),
+                  ),
+                Expanded(
+                  child: _showRecords
+                      ? _GradeRecordsBody(
+                          store: widget.store,
+                          grades: grades,
+                          emptyMessage: _emptyMessage,
+                          onEdit: (grade) => _openCreate(existing: grade),
+                          onMenu: _onMenuSelected,
+                        )
+                      : _SubjectAveragesBody(
+                          store: widget.store,
+                          selectedClass: widget.classId,
+                          student: widget.student,
+                          schoolId:
+                              widget.schoolId ?? widget.store.activeSchoolId,
+                          term: _selectedTerm,
+                          onSubjectTap: _openSubjectRecords,
+                        ),
+                ),
+              ],
+            ),
           },
         );
       },
@@ -277,25 +315,34 @@ class _SubjectAveragesBody extends StatelessWidget {
     required this.selectedClass,
     required this.student,
     required this.onSubjectTap,
+    this.schoolId,
     this.term,
   });
 
   final AppStore store;
   final String selectedClass;
   final Student student;
+  final String? schoolId;
   final String? term;
-  final ValueChanged<String> onSubjectTap;
+  final void Function({required int subjectId, required String subjectName})
+  onSubjectTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final subjects = store.subjects;
-    if (subjects.isEmpty) {
+    final averages = store.subjectAveragesForStudent(
+      className: selectedClass,
+      studentId: student.id,
+      term: term,
+      schoolId: schoolId,
+    );
+
+    if (averages.every((row) => row.gradeCount == 0)) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.page),
           child: Text(
-            'Хичээл бүртгээгүй байна',
+            GradeAverageCalculator.emptyTermMessage,
             style: theme.textTheme.bodyLarge?.copyWith(
               color: AppColors.onSurfaceVariant,
             ),
@@ -306,32 +353,25 @@ class _SubjectAveragesBody extends StatelessWidget {
     }
 
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.page,
-        AppSpacing.page,
-        AppSpacing.page,
-        88,
-      ),
-      itemCount: subjects.length,
+      padding: const EdgeInsets.all(AppSpacing.page),
+      itemCount: averages.length,
       separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, index) {
-        final subject = subjects[index];
-        final grades = store.gradesForStudentContext(
-          className: selectedClass,
-          studentId: student.id,
-          subjectName: subject,
-          term: term,
-        );
-        final average = store.averageScore(grades);
-        final label = store.formatGradeAverage(average);
-        final hasRecords = grades.isNotEmpty;
+        final row = averages[index];
+        final hasRecords = row.gradeCount > 0;
+        final label = row.displayWithLetter;
 
         return Material(
           color: AppColors.card,
           borderRadius: BorderRadius.circular(AppSpacing.radius),
           child: InkWell(
             borderRadius: BorderRadius.circular(AppSpacing.radius),
-            onTap: hasRecords ? () => onSubjectTap(subject) : null,
+            onTap: hasRecords
+                ? () => onSubjectTap(
+                    subjectId: row.subjectId,
+                    subjectName: row.subjectName,
+                  )
+                : null,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               child: Row(
@@ -341,30 +381,28 @@ class _SubjectAveragesBody extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          subject,
+                          row.subjectName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.titleSmall?.copyWith(
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        if (grades.isNotEmpty) ...[
-                          const SizedBox(height: 2),
+                        if (hasRecords)
                           Text(
-                            '${grades.length} дүн',
+                            row.countLine,
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: AppColors.onSurfaceVariant,
                             ),
                           ),
-                        ],
                       ],
                     ),
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    label,
+                    hasRecords ? 'Дундаж: $label' : label,
                     style: theme.textTheme.titleSmall?.copyWith(
-                      color: average == null
+                      color: row.average == null
                           ? AppColors.onSurfaceVariant
                           : AppColors.grade,
                       fontWeight: FontWeight.w700,
@@ -391,16 +429,22 @@ class _SubjectAveragesBody extends StatelessWidget {
 
 class _GradeRecordsBody extends StatelessWidget {
   const _GradeRecordsBody({
+    required this.store,
     required this.grades,
     required this.emptyMessage,
     required this.onEdit,
     required this.onMenu,
   });
 
+  final AppStore store;
   final List<Grade> grades;
   final String emptyMessage;
   final ValueChanged<Grade> onEdit;
   final void Function(Grade grade, String action) onMenu;
+
+  String _dateLabel(Grade grade) {
+    return GradeAverageCalculator.historyDateLabel(grade);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -429,43 +473,86 @@ class _GradeRecordsBody extends StatelessWidget {
       ),
       children: [
         for (final item in grades)
-          Card(
-            child: ListTile(
-              onTap: () => onEdit(item),
-              onLongPress: () async {
-                final action = await showEditDeleteMenu(context);
-                if (action == null) return;
-                onMenu(item, action);
-              },
-              contentPadding: const EdgeInsets.all(AppSpacing.card),
-              title: Text(
-                item.subject,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              subtitle: Text(item.term),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    item.scoreWithLetter,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: AppColors.grade,
-                      fontWeight: FontWeight.bold,
-                    ),
+          Builder(
+            builder: (context) {
+              final canEdit = store.canEditGradeRecord(item);
+              final canDelete = store.canDeleteGradeRecord(item);
+              return Card(
+                child: ListTile(
+                  onTap: canEdit ? () => onEdit(item) : null,
+                  onLongPress: (canEdit || canDelete)
+                      ? () async {
+                          final action = await showEditDeleteMenu(
+                            context,
+                            canEdit: canEdit,
+                            canDelete: canDelete,
+                          );
+                          if (action == null) return;
+                          onMenu(item, action);
+                        }
+                      : null,
+                  contentPadding: const EdgeInsets.all(AppSpacing.card),
+                  title: Text(
+                    _dateLabel(item),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  PopupMenuButton<String>(
-                    tooltip: 'Цэс',
-                    onSelected: (value) => onMenu(item, value),
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(value: 'edit', child: Text('✏️ Засах')),
-                      PopupMenuItem(value: 'delete', child: Text('🗑 Устгах')),
+                  subtitle: _subtitle(item),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        item.scoreWithLetter,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: AppColors.grade,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (canEdit || canDelete)
+                        PopupMenuButton<String>(
+                          tooltip: 'Цэс',
+                          onSelected: (value) => onMenu(item, value),
+                          itemBuilder: (context) => [
+                            if (canEdit)
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('✏️ Засах'),
+                              ),
+                            if (canDelete)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Text('🗑 Устгах'),
+                              ),
+                          ],
+                        ),
                     ],
                   ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
       ],
     );
+  }
+
+  Widget? _subtitle(Grade item) {
+    final parts = <String>[];
+    final title = item.title?.trim();
+    if (title != null &&
+        title.isNotEmpty &&
+        title != item.subject.trim()) {
+      parts.add(title);
+    } else if (item.gradeType.isNotEmpty &&
+        item.gradeType != Grade.defaultGradeType) {
+      parts.add(item.gradeType);
+    }
+    final teacherId = item.teacherId?.trim();
+    if (teacherId != null && teacherId.isNotEmpty) {
+      final teacher = store.teacherById(teacherId);
+      if (teacher != null) parts.add(teacher.fullName);
+    }
+    final note = item.note?.trim();
+    if (note != null && note.isNotEmpty) parts.add(note);
+    if (parts.isEmpty) return null;
+    return Text(parts.join(' · '));
   }
 }

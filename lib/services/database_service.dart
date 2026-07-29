@@ -15,7 +15,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'edubridge.db';
-  static const _dbVersion = 15;
+  static const _dbVersion = 21;
 
   /// Default school for single-school installs and migrated data.
   static const defaultSchoolId = 'sch-default';
@@ -142,6 +142,24 @@ class DatabaseService {
     if (oldVersion < 15) {
       await _migrateLessonOccurrencesV15(db);
     }
+    if (oldVersion < 16) {
+      await _migrateAttendanceDateKeyV16(db);
+    }
+    if (oldVersion < 17) {
+      await _migrateAttendanceSubjectIdV17(db);
+    }
+    if (oldVersion < 18) {
+      await _migrateAttendanceHistoryMetaV18(db);
+    }
+    if (oldVersion < 19) {
+      await _migrateTeacherAuthUidV19(db);
+    }
+    if (oldVersion < 20) {
+      await _migrateClassGradeSectionV20(db);
+    }
+    if (oldVersion < 21) {
+      await _migrateRecordOwnershipV21(db);
+    }
   }
 
   /// Create schema as of version 3 (for migration tests).
@@ -226,7 +244,9 @@ class DatabaseService {
       CREATE TABLE classes (
         name TEXT PRIMARY KEY,
         homeroom_teacher_id TEXT,
-        school_id TEXT NOT NULL DEFAULT '$defaultSchoolId'
+        school_id TEXT NOT NULL DEFAULT '$defaultSchoolId',
+        grade_level INTEGER,
+        section TEXT
       )
     ''');
 
@@ -255,6 +275,14 @@ class DatabaseService {
         absent_count INTEGER NOT NULL,
         entries_json TEXT,
         legacy_status TEXT,
+        date_key TEXT,
+        school_id TEXT,
+        recorded_at TEXT,
+        subject_id INTEGER,
+        recorded_by_teacher_id TEXT,
+        note TEXT,
+        created_by_uid TEXT,
+        updated_by_uid TEXT,
         FOREIGN KEY (class_name) REFERENCES classes(name)
       )
     ''');
@@ -269,6 +297,9 @@ class DatabaseService {
         score TEXT NOT NULL,
         term TEXT NOT NULL,
         letter_grade TEXT,
+        grade_date TEXT,
+        created_by_uid TEXT,
+        updated_by_uid TEXT,
         FOREIGN KEY (class_name) REFERENCES classes(name)
       )
     ''');
@@ -282,6 +313,13 @@ class DatabaseService {
         description TEXT NOT NULL,
         due_date TEXT NOT NULL,
         status TEXT NOT NULL,
+        school_id TEXT,
+        subject_id INTEGER,
+        created_by_uid TEXT,
+        created_by_teacher_id TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        updated_by_uid TEXT,
         FOREIGN KEY (class_name) REFERENCES classes(name)
       )
     ''');
@@ -295,6 +333,11 @@ class DatabaseService {
         body TEXT NOT NULL,
         date TEXT NOT NULL,
         is_featured INTEGER NOT NULL,
+        created_by_uid TEXT,
+        created_by_teacher_id TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        updated_by_uid TEXT,
         FOREIGN KEY (class_name) REFERENCES classes(name)
       )
     ''');
@@ -391,7 +434,8 @@ class DatabaseService {
         school_id TEXT NOT NULL DEFAULT '$defaultSchoolId',
         phone TEXT NOT NULL DEFAULT '',
         email TEXT NOT NULL DEFAULT '',
-        is_active INTEGER NOT NULL DEFAULT 1
+        is_active INTEGER NOT NULL DEFAULT 1,
+        auth_uid TEXT
       )
     ''');
 
@@ -569,6 +613,11 @@ class DatabaseService {
         priority TEXT NOT NULL,
         is_visible_to_guardian INTEGER NOT NULL,
         is_visible_to_student INTEGER NOT NULL,
+        school_id TEXT,
+        class_id TEXT,
+        created_by_uid TEXT,
+        updated_at TEXT,
+        updated_by_uid TEXT,
         FOREIGN KEY (student_id) REFERENCES students(id),
         FOREIGN KEY (teacher_id) REFERENCES teachers(id),
         FOREIGN KEY (subject_id) REFERENCES subjects(id)
@@ -1008,6 +1057,188 @@ class DatabaseService {
   /// Schedule-driven class journal occurrences.
   Future<void> _migrateLessonOccurrencesV15(Database db) async {
     await _createLessonOccurrencesTable(db);
+  }
+
+  /// Stable local dateKey (+ school/recorded metadata) for attendance matching.
+  Future<void> _migrateAttendanceDateKeyV16(Database db) async {
+    await db.execute('ALTER TABLE attendance ADD COLUMN date_key TEXT');
+    await db.execute('ALTER TABLE attendance ADD COLUMN school_id TEXT');
+    await db.execute('ALTER TABLE attendance ADD COLUMN recorded_at TEXT');
+
+    final rows = await db.query('attendance', columns: ['id', 'date']);
+    for (final row in rows) {
+      final id = row['id'] as String?;
+      final date = (row['date'] as String?)?.trim() ?? '';
+      if (id == null || id.isEmpty) continue;
+
+      String? key;
+      final iso = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(date);
+      if (iso != null) {
+        key = date;
+      } else {
+        final mongolian = RegExp(
+          r'^(\d+)\s*оны\s*(\d+)\s*сарын\s*(\d+)$',
+        ).firstMatch(date);
+        if (mongolian != null) {
+          final y = mongolian.group(1)!.padLeft(4, '0');
+          final m = mongolian.group(2)!.padLeft(2, '0');
+          final d = mongolian.group(3)!.padLeft(2, '0');
+          key = '$y-$m-$d';
+        }
+      }
+      if (key == null) continue;
+      await db.update(
+        'attendance',
+        {'date_key': key},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }
+  }
+
+  /// Subject scope for attendance uniqueness (school/class/subject/date).
+  Future<void> _migrateAttendanceSubjectIdV17(Database db) async {
+    await db.execute('ALTER TABLE attendance ADD COLUMN subject_id INTEGER');
+  }
+
+  /// Append-only history metadata: who recorded + optional note.
+  Future<void> _migrateAttendanceHistoryMetaV18(Database db) async {
+    await db.execute(
+      'ALTER TABLE attendance ADD COLUMN recorded_by_teacher_id TEXT',
+    );
+    await db.execute('ALTER TABLE attendance ADD COLUMN note TEXT');
+  }
+
+  /// Firebase Auth uid link on local teacher rows (canonical: authUid).
+  Future<void> _migrateTeacherAuthUidV19(Database db) async {
+    try {
+      await db.execute('ALTER TABLE teachers ADD COLUMN auth_uid TEXT');
+    } catch (_) {
+      // Column already present when teachers were created by a newer
+      // `_createSchoolStructureTables` during an earlier upgrade step.
+    }
+  }
+
+  /// Grade level (1–12) + optional section for class naming.
+  Future<void> _migrateClassGradeSectionV20(Database db) async {
+    try {
+      await db.execute('ALTER TABLE classes ADD COLUMN grade_level INTEGER');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE classes ADD COLUMN section TEXT');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE grades ADD COLUMN grade_date TEXT');
+    } catch (_) {}
+
+    final rows = await db.query('classes');
+    for (final row in rows) {
+      final name = (row['name'] as String?)?.trim() ?? '';
+      if (name.isEmpty) continue;
+      if (row['grade_level'] != null) continue;
+      final parsed = _tryParseClassName(name);
+      if (parsed == null) {
+        if (kDebugMode) {
+          debugPrint('LEGACY_CLASS_UNPARSED name=$name');
+        }
+        continue;
+      }
+      await db.update(
+        'classes',
+        {
+          'grade_level': parsed.$1,
+          'section': parsed.$2,
+        },
+        where: 'name = ?',
+        whereArgs: [name],
+      );
+    }
+  }
+
+  /// Lightweight parse for migration (mirrors [ClassNaming.tryParse]).
+  (int, String?)? _tryParseClassName(String name) {
+    final numbered = RegExp(
+      r'^(\d{1,2})\s*[-–]?\s*р\s*анги$',
+      caseSensitive: false,
+    ).firstMatch(name);
+    if (numbered != null) {
+      final grade = int.tryParse(numbered.group(1)!);
+      if (grade != null && grade >= 1 && grade <= 12) return (grade, null);
+      return null;
+    }
+    final withSuffix = RegExp(
+      r'^(\d{1,2})\s*([а-яёөүa-z0-9]{1,3})\s*анги$',
+      caseSensitive: false,
+    ).firstMatch(name);
+    if (withSuffix != null) {
+      final grade = int.tryParse(withSuffix.group(1)!);
+      final section = withSuffix.group(2)?.trim().toLowerCase();
+      if (grade != null &&
+          grade >= 1 &&
+          grade <= 12 &&
+          section != null &&
+          section.isNotEmpty) {
+        return (grade, section);
+      }
+      return null;
+    }
+    final compact = RegExp(
+      r'^(\d{1,2})([а-яёөүa-zА-ЯЁӨҮA-Z]{1,3})$',
+    ).firstMatch(name);
+    if (compact != null) {
+      final grade = int.tryParse(compact.group(1)!);
+      final section = compact.group(2)?.trim().toLowerCase();
+      if (grade != null &&
+          grade >= 1 &&
+          grade <= 12 &&
+          section != null &&
+          section.isNotEmpty) {
+        return (grade, section);
+      }
+    }
+    final digitsOnly = RegExp(r'^(\d{1,2})$').firstMatch(name);
+    if (digitsOnly != null) {
+      final grade = int.tryParse(digitsOnly.group(1)!);
+      if (grade != null && grade >= 1 && grade <= 12) return (grade, null);
+    }
+    return null;
+  }
+
+  /// Ownership columns for advice / announcements / homework / grades / attendance.
+  Future<void> _migrateRecordOwnershipV21(Database db) async {
+    Future<void> add(String sql) async {
+      try {
+        await db.execute(sql);
+      } catch (_) {}
+    }
+
+    await add('ALTER TABLE teacher_notes ADD COLUMN school_id TEXT');
+    await add('ALTER TABLE teacher_notes ADD COLUMN class_id TEXT');
+    await add('ALTER TABLE teacher_notes ADD COLUMN created_by_uid TEXT');
+    await add('ALTER TABLE teacher_notes ADD COLUMN updated_at TEXT');
+    await add('ALTER TABLE teacher_notes ADD COLUMN updated_by_uid TEXT');
+
+    await add('ALTER TABLE announcements ADD COLUMN created_by_uid TEXT');
+    await add(
+      'ALTER TABLE announcements ADD COLUMN created_by_teacher_id TEXT',
+    );
+    await add('ALTER TABLE announcements ADD COLUMN created_at TEXT');
+    await add('ALTER TABLE announcements ADD COLUMN updated_at TEXT');
+    await add('ALTER TABLE announcements ADD COLUMN updated_by_uid TEXT');
+
+    await add('ALTER TABLE homework ADD COLUMN school_id TEXT');
+    await add('ALTER TABLE homework ADD COLUMN subject_id INTEGER');
+    await add('ALTER TABLE homework ADD COLUMN created_by_uid TEXT');
+    await add('ALTER TABLE homework ADD COLUMN created_by_teacher_id TEXT');
+    await add('ALTER TABLE homework ADD COLUMN created_at TEXT');
+    await add('ALTER TABLE homework ADD COLUMN updated_at TEXT');
+    await add('ALTER TABLE homework ADD COLUMN updated_by_uid TEXT');
+
+    await add('ALTER TABLE grades ADD COLUMN created_by_uid TEXT');
+    await add('ALTER TABLE grades ADD COLUMN updated_by_uid TEXT');
+
+    await add('ALTER TABLE attendance ADD COLUMN created_by_uid TEXT');
+    await add('ALTER TABLE attendance ADD COLUMN updated_by_uid TEXT');
   }
 }
 

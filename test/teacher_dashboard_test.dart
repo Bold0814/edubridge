@@ -224,7 +224,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Ангийн дундаж'));
     await tester.pumpAndSettle();
-    expect(find.byType(FloatingActionButton), findsOneWidget);
+    // Class grade summary is read-only (no FAB); entry stays on grade-entry screens.
+    expect(find.byType(FloatingActionButton), findsNothing);
     expect(find.text('Ангийн дүн оруулах'), findsNothing);
 
     await tester.pageBack();

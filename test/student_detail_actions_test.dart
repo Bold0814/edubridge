@@ -139,7 +139,7 @@ void main() {
     expect(find.byType(StudentGradeDetailScreen), findsOneWidget);
     expect(find.text('DetailМат'), findsOneWidget);
     expect(find.text('DetailГазар'), findsOneWidget);
-    expect(find.text('90.0'), findsOneWidget);
+    expect(find.textContaining('90.0'), findsOneWidget);
   });
 
   testWidgets('Даалгавар харах opens subject-filtered homework', (

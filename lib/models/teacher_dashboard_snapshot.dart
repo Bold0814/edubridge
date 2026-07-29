@@ -3,6 +3,7 @@ import '../models/attendance_record.dart';
 import '../models/grade.dart';
 import '../models/homework.dart';
 import '../models/teacher_note.dart';
+import '../services/app_clock.dart';
 import '../state/app_store.dart';
 
 /// One-shot dashboard view-model built from already-loaded AppStore data.
@@ -30,8 +31,8 @@ class TeacherDashboardSnapshot {
     String className, {
     DateTime? now,
   }) {
-    final today = now ?? DateTime.now();
-    final todayLabel = '${today.year} оны ${today.month} сарын ${today.day}';
+    final today = now != null ? AppClock.today(now) : AppClock.today();
+    final todayLabel = AppClock.mongolianLabel(today);
 
     final attendanceRecords = store.attendanceFor(className);
     final subjectId = store.activeContext.subjectId;

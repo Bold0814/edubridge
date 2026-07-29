@@ -7,6 +7,7 @@ class Teacher {
     this.phone = '',
     this.email = '',
     this.isActive = true,
+    this.authUid,
   });
 
   final String id;
@@ -16,12 +17,20 @@ class Teacher {
   final String email;
   final bool isActive;
 
+  /// Firebase Auth uid linked to this teacher (canonical cloud identity).
+  ///
+  /// Never confuse with local [UserAccount.id]. Security rules compare
+  /// `request.auth.uid` to this field only — not display name.
+  final String? authUid;
+
   Teacher copyWith({
     String? fullName,
     String? schoolId,
     String? phone,
     String? email,
     bool? isActive,
+    String? authUid,
+    bool clearAuthUid = false,
   }) {
     return Teacher(
       id: id,
@@ -30,6 +39,7 @@ class Teacher {
       phone: phone ?? this.phone,
       email: email ?? this.email,
       isActive: isActive ?? this.isActive,
+      authUid: clearAuthUid ? null : (authUid ?? this.authUid),
     );
   }
 }
