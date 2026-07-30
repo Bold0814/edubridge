@@ -34,6 +34,8 @@ Future<void> main() async {
   );
   await store.load();
   await store.ensureDemoAccountsIfNeeded();
+  // Backfill Firebase Auth + Firestore authUid for any legacy local accounts.
+  await store.ensureCloudAuthForAccountsMissingUid();
 
   runApp(EduBridgeApp(store: store));
 }

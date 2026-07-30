@@ -13,6 +13,7 @@ import '../onboarding/school_setup_screen.dart';
 import '../settings_screen.dart';
 import '../subjects_settings_screen.dart';
 import '../teacher_list_screen.dart';
+import 'audit_log_screen.dart';
 import 'school_students_hub_screen.dart';
 
 /// Simple school administration home for the active school.
@@ -109,6 +110,10 @@ class AdminSchoolHomeScreen extends StatelessWidget {
                     context,
                     ClassTeacherAssignmentScreen(store: store),
                   ),
+                ),
+                _ActionTile(
+                  title: 'Үйлдлийн түүх',
+                  onTap: () => _open(context, AuditLogScreen(store: store)),
                 ),
                 _ActionTile(
                   title: 'Тохиргоо',

@@ -46,8 +46,11 @@ service cloud.firestore {
         && teacherDoc(teacherId).data.schoolId is string;
     }
 
+    // subjectId is stored as int; path segment must be string-concatenated.
     function assignmentPath(schoolId, classId, subjectId) {
-      return /databases/$(database)/documents/class_subject_teachers/$(schoolId + '_' + classId + '_' + subjectId);
+      return /databases/$(database)/documents/class_subject_teachers/$(
+        schoolId + '_' + classId + '_' + string(subjectId)
+      );
     }
 
     function assignmentDoc(schoolId, classId, subjectId) {
@@ -108,31 +111,69 @@ service cloud.firestore {
         );
     }
 
-    // Teacher update/delete requires createdByUid ownership.
-    // Legacy grades without createdByUid: school admin only.
+    // Owner = createdByUid (Firebase Auth) OR teachers/{teacherId}.authUid.
     function gradeOwnedByCaller() {
-      return resource.data.keys().hasAny(['createdByUid'])
-        && resource.data.createdByUid is string
-        && resource.data.createdByUid.size() > 0
-        && resource.data.createdByUid == request.auth.uid;
+      return (
+          resource.data.keys().hasAny(['createdByUid'])
+          && resource.data.createdByUid is string
+          && resource.data.createdByUid.size() > 0
+          && resource.data.createdByUid == request.auth.uid
+        )
+        || (
+          resource.data.keys().hasAny(['teacherId'])
+          && resource.data.teacherId is string
+          && resource.data.teacherId.size() > 0
+          && teacherAuthMatches(resource.data.teacherId)
+        );
     }
 
-    function gradeTeacherUpdateAuthorized() {
+    // Unowned / blank-score shells may be claimed by the assigned teacher.
+    function gradeClaimableByAssignedTeacher() {
       return isSchoolTeacher(resource.data.schoolId)
-        && gradeOwnedByCaller()
         && isAssignedSubjectTeacher(
           request.resource.data.schoolId,
           request.resource.data.classId,
           request.resource.data.subjectId,
           request.resource.data.teacherId
         )
-        && request.resource.data.createdByUid == resource.data.createdByUid
+        && (
+          !('createdByUid' in resource.data)
+          || resource.data.createdByUid == null
+          || resource.data.createdByUid.size() == 0
+        )
+        && (
+          !('score' in resource.data)
+          || resource.data.score == null
+          || resource.data.score == ''
+        )
+        && request.resource.data.createdByUid == request.auth.uid;
+    }
+
+    function gradeTeacherUpdateAuthorized() {
+      return isSchoolTeacher(resource.data.schoolId)
+        && isAssignedSubjectTeacher(
+          request.resource.data.schoolId,
+          request.resource.data.classId,
+          request.resource.data.subjectId,
+          request.resource.data.teacherId
+        )
         && request.resource.data.schoolId == resource.data.schoolId
         && request.resource.data.createdAt == resource.data.createdAt
         && (
           !('updatedByUid' in request.resource.data)
           || request.resource.data.updatedByUid == null
           || request.resource.data.updatedByUid == request.auth.uid
+        )
+        && (
+          (
+            gradeOwnedByCaller()
+            && (
+              !('createdByUid' in resource.data)
+              || resource.data.createdByUid == null
+              || request.resource.data.createdByUid == resource.data.createdByUid
+            )
+          )
+          || gradeClaimableByAssignedTeacher()
         );
     }
 
@@ -149,25 +190,43 @@ service cloud.firestore {
 
     // Identity foundation.
     match /schools/{schoolId} {
-      allow read: if hasActiveMembership(schoolId);
-      allow create, update: if isSchoolAdmin(schoolId);
+      allow read: if signedIn() && (
+        hasActiveMembership(schoolId)
+        || resource.data.createdByUid == request.auth.uid
+      );
+      // First admin may create the school; later updates require admin membership.
+      allow create: if signedIn()
+        && request.resource.data.createdByUid == request.auth.uid;
+      allow update: if isSchoolAdmin(schoolId);
     }
 
     match /users/{uid} {
+      // Provisioning writes these while signed in as the new user (secondary app).
       allow read: if signedIn() && request.auth.uid == uid;
       allow create, update: if signedIn() && request.auth.uid == uid;
     }
 
     match /school_memberships/{membershipId} {
-      allow read: if signedIn()
-        && resource.data.uid == request.auth.uid;
-      allow create, update: if signedIn()
-        && request.resource.data.uid == request.auth.uid;
+      allow read: if signedIn() && (
+        resource.data.uid == request.auth.uid
+        || isSchoolAdmin(resource.data.schoolId)
+      );
+      // New user may create own membership; school admin may provision others.
+      allow create, update: if signedIn() && (
+        request.resource.data.uid == request.auth.uid
+        || isSchoolAdmin(request.resource.data.schoolId)
+      );
     }
 
     match /teachers/{teacherId} {
-      allow read: if signedIn()
-        && hasActiveMembership(resource.data.schoolId);
+      // Missing docs must be readable as null so upsert can create without
+      // failing the get-before-write existence check (resource is null).
+      allow get: if signedIn()
+        && (
+          !exists(/databases/$(database)/documents/teachers/$(teacherId))
+          || hasActiveMembership(resource.data.schoolId)
+        );
+      allow list: if false;
       allow create, update: if signedIn()
         && (
           isSchoolAdmin(request.resource.data.schoolId)
@@ -179,8 +238,12 @@ service cloud.firestore {
     }
 
     match /class_subject_teachers/{assignmentId} {
-      allow read: if signedIn()
-        && hasActiveMembership(resource.data.schoolId);
+      allow get: if signedIn()
+        && (
+          !exists(/databases/$(database)/documents/class_subject_teachers/$(assignmentId))
+          || hasActiveMembership(resource.data.schoolId)
+        );
+      allow list: if false;
       allow create, update: if signedIn()
         && (
           isSchoolAdmin(request.resource.data.schoolId)
@@ -193,7 +256,13 @@ service cloud.firestore {
     }
 
     match /grades/{gradeId} {
-      allow read: if signedIn()
+      // Missing docs must be get-able as null for create existence checks.
+      allow get: if signedIn()
+        && (
+          !exists(/databases/$(database)/documents/grades/$(gradeId))
+          || hasActiveMembership(resource.data.schoolId)
+        );
+      allow list: if signedIn()
         && hasActiveMembership(resource.data.schoolId);
 
       allow create: if gradeCreateAuthorized()

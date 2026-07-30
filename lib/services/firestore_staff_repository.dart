@@ -29,8 +29,14 @@ class FirestoreStaffRepository {
 
   Future<void> upsertTeacher(FirestoreTeacher teacher) async {
     final path = FirestoreTeacher.pathFor(teacher.id);
-    final existing = await _store.get(path);
     final stamp = _serverTimestamp();
+    // Prefer merge write so missing-doc get failures cannot block create.
+    Map<String, dynamic>? existing;
+    try {
+      existing = await _store.get(path);
+    } catch (_) {
+      existing = null;
+    }
     if (existing == null) {
       await _store.set(
         path,
@@ -73,8 +79,14 @@ class FirestoreStaffRepository {
       classId: assignment.classId,
       subjectId: assignment.subjectId,
     );
-    final existing = await _store.get(path);
     final stamp = _serverTimestamp();
+    // Prefer merge write so missing-doc get failures cannot block create.
+    Map<String, dynamic>? existing;
+    try {
+      existing = await _store.get(path);
+    } catch (_) {
+      existing = null;
+    }
     if (existing == null) {
       await _store.set(
         path,

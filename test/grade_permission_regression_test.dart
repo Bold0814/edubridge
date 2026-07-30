@@ -268,8 +268,169 @@ void main() {
     expect(updated.letterGrade, 'A+');
   });
 
-  test('admin can save', () async {
+  test('assigned Math teacher updates own grade after reload', () async {
     await seed();
+
+    final created = await store.saveGrade(
+      Grade(
+        id: store.nextGradeId(),
+        className: classId,
+        studentId: student.id,
+        studentName: student.fullName,
+        subject: 'Math',
+        subjectId: mathId,
+        score: '82',
+        term: '1-р улирал',
+        termId: '1-р улирал',
+      ),
+      isUpdate: false,
+    );
+    expect(created.teacherId, bold.id);
+
+    await store.reloadGrades();
+    final reloaded = store.gradesForStudentContext(
+      className: classId,
+      studentId: student.id,
+      subjectId: mathId,
+      term: '1-р улирал',
+    ).first;
+    expect(reloaded.teacherId, bold.id);
+    expect(store.canEditGradeRecord(reloaded), isTrue);
+
+    final updated = await store.saveGrade(
+      reloaded.copyWith(score: '93'),
+      isUpdate: true,
+    );
+    expect(updated.score, '93');
+  });
+
+  test('other teacher cannot update owned Math grade', () async {
+    await seed();
+
+    final created = await store.saveGrade(
+      Grade(
+        id: store.nextGradeId(),
+        className: classId,
+        studentId: student.id,
+        studentName: student.fullName,
+        subject: 'Math',
+        subjectId: mathId,
+        score: '75',
+        term: '1-р улирал',
+        termId: '1-р улирал',
+      ),
+      isUpdate: false,
+    );
+
+    // Admin reassigns Math so other teacher passes assignment but not ownership.
+    await store.logout();
+    await store.login(
+      username: 'gpadmin',
+      password: 'test123',
+      rememberMe: false,
+    );
+    await store.selectSchoolMembership(
+      store.activeMembershipsForUser(store.authenticatedUser!.id).first,
+    );
+    await store.saveClassAssignments(
+      classId: classId,
+      homeroomTeacherId: bold.id,
+      subjectTeacherIds: {mathId: otherTeacher.id},
+    );
+
+    await store.logout();
+    await store.login(
+      username: '99009999',
+      password: 'Teach2026',
+      rememberMe: false,
+    );
+    await store.selectSchoolMembership(
+      store.activeMembershipsForUser(store.authenticatedUser!.id).first,
+    );
+    await store.setTeacherWorkspace(classId: classId, subjectId: mathId);
+
+    expect(
+      store.canTeacherManageGrades(classId: classId, subjectId: mathId).allowed,
+      isTrue,
+    );
+    expect(store.canEditGradeRecord(created), isFalse);
+    await expectLater(
+      store.saveGrade(created.copyWith(score: '99'), isUpdate: true),
+      throwsA(
+        isA<PermissionDeniedException>().having(
+          (e) => e.message,
+          'message',
+          AppStore.recordOwnOnlyMessage,
+        ),
+      ),
+    );
+  });
+
+  test('blank existing grade is treated as create/claim not ownership update',
+      () async {
+    await seed(useSynced: true);
+
+    final shellId = store.nextGradeId();
+    // Insert placeholder row bypassing score validation (journal shell).
+    await store.repository.insertGrade(
+      Grade(
+        id: shellId,
+        className: classId,
+        studentId: student.id,
+        studentName: student.fullName,
+        subject: 'Math',
+        subjectId: mathId,
+        score: '',
+        term: '1-р улирал',
+        termId: '1-р улирал',
+        schoolId: schoolId,
+      ),
+    );
+    await store.reloadGrades();
+    final shell = store.gradesForStudentContext(
+      className: classId,
+      studentId: student.id,
+      subjectId: mathId,
+      term: '1-р улирал',
+    ).firstWhere((g) => g.id == shellId);
+    expect(Grade.hasEnteredScore(shell), isFalse);
+
+    final saved = await store.saveGrade(
+      Grade(
+        id: shellId,
+        className: classId,
+        studentId: student.id,
+        studentName: student.fullName,
+        subject: 'Math',
+        subjectId: mathId,
+        score: '88',
+        term: '1-р улирал',
+        termId: '1-р улирал',
+      ),
+      isUpdate: true, // UI may pass true; store must treat blank as create.
+    );
+    expect(saved.score, '88');
+    expect(saved.teacherId, bold.id);
+  });
+
+  test('admin can save and update any grade', () async {
+    await seed();
+
+    final created = await store.saveGrade(
+      Grade(
+        id: store.nextGradeId(),
+        className: classId,
+        studentId: student.id,
+        studentName: student.fullName,
+        subject: 'Math',
+        subjectId: mathId,
+        score: '70',
+        term: '1-р улирал',
+        termId: '1-р улирал',
+      ),
+      isUpdate: false,
+    );
+
     await store.logout();
     await store.login(
       username: 'gpadmin',
@@ -284,13 +445,14 @@ void main() {
       store.canTeacherManageGrades(classId: classId, subjectId: mathId).allowed,
       isTrue,
     );
+    expect(store.canEditGradeRecord(created), isTrue);
 
     final saved = await store.saveGrade(
       Grade(
         id: store.nextGradeId(),
         className: classId,
-        studentId: student.id,
-        studentName: student.fullName,
+        studentId: secondStudent.id,
+        studentName: secondStudent.fullName,
         subject: 'Math',
         subjectId: mathId,
         score: '88',
@@ -300,6 +462,12 @@ void main() {
       isUpdate: false,
     );
     expect(saved.score, '88');
+
+    final updated = await store.saveGrade(
+      created.copyWith(score: '91'),
+      isUpdate: true,
+    );
+    expect(updated.score, '91');
   });
 
   test('unassigned teacher is denied', () async {

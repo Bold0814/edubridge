@@ -6,6 +6,7 @@ import '../models/announcement_read_receipt.dart';
 import '../models/app_role.dart';
 import '../models/app_settings.dart';
 import '../models/attendance_record.dart';
+import '../models/audit_log.dart';
 import '../models/class_subject_teacher.dart';
 import '../models/grade.dart';
 import '../models/guardian.dart';
@@ -768,6 +769,60 @@ class EduBridgeRepository {
     await _db.delete('teacher_notes', where: 'id = ?', whereArgs: [id]);
   }
 
+  // --- Audit logs (append-only) ---
+
+  Future<List<AuditLogEntry>> loadAuditLogs({String? schoolId}) async {
+    final rows = schoolId == null || schoolId.isEmpty
+        ? await _db.query('audit_logs', orderBy: 'created_at DESC')
+        : await _db.query(
+            'audit_logs',
+            where: 'school_id = ?',
+            whereArgs: [schoolId],
+            orderBy: 'created_at DESC',
+          );
+    return rows.map(_auditLogFromRow).toList(growable: false);
+  }
+
+  Future<void> insertAuditLog(AuditLogEntry entry) async {
+    await _db.insert('audit_logs', _auditLogToRow(entry));
+  }
+
+  Map<String, Object?> _auditLogToRow(AuditLogEntry entry) => {
+    'id': entry.id,
+    'school_id': entry.schoolId,
+    'class_id': entry.classId,
+    'subject_id': entry.subjectId,
+    'student_id': entry.studentId,
+    'teacher_id': entry.teacherId,
+    'teacher_name': entry.teacherName,
+    'role': entry.role,
+    'action': entry.action.storageValue,
+    'entity_type': entry.entityType.storageValue,
+    'entity_id': entry.entityId,
+    'old_value': entry.oldValue,
+    'new_value': entry.newValue,
+    'created_at': entry.createdAt,
+  };
+
+  AuditLogEntry _auditLogFromRow(Map<String, Object?> row) {
+    return AuditLogEntry(
+      id: row['id']! as String,
+      schoolId: row['school_id']! as String,
+      classId: row['class_id'] as String?,
+      subjectId: row['subject_id'] as int?,
+      studentId: row['student_id'] as String?,
+      teacherId: row['teacher_id'] as String?,
+      teacherName: row['teacher_name'] as String?,
+      role: row['role'] as String?,
+      action: AuditAction.fromStorage(row['action']! as String),
+      entityType: AuditEntityType.fromStorage(row['entity_type']! as String),
+      entityId: row['entity_id']! as String,
+      oldValue: row['old_value'] as String?,
+      newValue: row['new_value'] as String?,
+      createdAt: row['created_at']! as String,
+    );
+  }
+
   // --- Timetable ---
 
   Future<List<LessonPeriod>> loadLessonPeriods() async {
@@ -1516,6 +1571,9 @@ class EduBridgeRepository {
     'term': grade.term,
     'letter_grade': grade.letterGrade,
     'grade_date': grade.gradeDate,
+    'school_id': grade.schoolId,
+    'subject_id': grade.subjectId,
+    'teacher_id': grade.teacherId,
     'created_by_uid': grade.createdByUid,
     'updated_by_uid': grade.updatedByUid,
   };
@@ -1531,6 +1589,9 @@ class EduBridgeRepository {
       term: row['term']! as String,
       letterGrade: row['letter_grade'] as String?,
       gradeDate: row['grade_date'] as String?,
+      schoolId: row['school_id'] as String?,
+      subjectId: row['subject_id'] as int?,
+      teacherId: row['teacher_id'] as String?,
       createdByUid: row['created_by_uid'] as String?,
       updatedByUid: row['updated_by_uid'] as String?,
     );
@@ -1915,6 +1976,7 @@ class EduBridgeRepository {
     'teacher_id': user.teacherId,
     'guardian_id': user.guardianId,
     'student_id': user.studentId,
+    'auth_uid': user.authUid,
     'is_active': user.isActive ? 1 : 0,
     'account_status': user.status.storageValue,
     'created_at': user.createdAt.toIso8601String(),
@@ -1932,6 +1994,7 @@ class EduBridgeRepository {
       teacherId: row['teacher_id'] as String?,
       guardianId: row['guardian_id'] as String?,
       studentId: row['student_id'] as String?,
+      authUid: row['auth_uid'] as String?,
       isActive: (row['is_active'] as int?) != 0,
       status: AccountStatus.fromStorage(row['account_status'] as String?),
       createdAt:

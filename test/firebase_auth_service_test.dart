@@ -18,6 +18,10 @@ void main() {
         FirebaseAuthService.teacherInternalEmail('+976 9911-2233'),
         '97699112233@teacher.edubridge.local',
       );
+      expect(
+        FirebaseAuthService.teacherInternalEmail('teacher1'),
+        'teacher1@teacher.edubridge.local',
+      );
     });
 
     test('guardian email normalization', () {
@@ -63,6 +67,20 @@ void main() {
         FirebaseAuthService.adminInternalEmail('School Admin'),
         'schooladmin@admin.edubridge.local',
       );
+    });
+  });
+
+  group('FirebaseAuthService learner secrets', () {
+    test('firebaseSecretFromPin meets teacher password policy', () {
+      final secret = FirebaseAuthService.firebaseSecretFromPin('2580');
+      expect(FirebaseAuthService.meetsAdminTeacherPasswordPolicy(secret), isTrue);
+    });
+
+    test('firebaseSecretFromAccountId is stable and strong', () {
+      final a = FirebaseAuthService.firebaseSecretFromAccountId('usr-100');
+      final b = FirebaseAuthService.firebaseSecretFromAccountId('usr-100');
+      expect(a, b);
+      expect(FirebaseAuthService.meetsAdminTeacherPasswordPolicy(a), isTrue);
     });
   });
 

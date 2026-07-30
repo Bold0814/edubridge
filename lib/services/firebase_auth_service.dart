@@ -190,19 +190,26 @@ class FirebaseAuthService {
     return raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
   }
 
-  static String teacherInternalEmail(String normalizedPhone) {
-    final phone = normalizePhone(normalizedPhone);
-    return '$phone@teacher.edubridge.local';
+  static String teacherInternalEmail(String usernameOrPhone) {
+    final phone = normalizePhone(usernameOrPhone);
+    // Require a real phone length so usernames like "teacher1" stay usernames.
+    if (phone.length >= 8) return '$phone@teacher.edubridge.local';
+    final user = normalizeUsername(usernameOrPhone);
+    return '$user@teacher.edubridge.local';
   }
 
-  static String guardianInternalEmail(String normalizedPhone) {
-    final phone = normalizePhone(normalizedPhone);
-    return '$phone@guardian.edubridge.local';
+  static String guardianInternalEmail(String usernameOrPhone) {
+    final phone = normalizePhone(usernameOrPhone);
+    if (phone.length >= 8) return '$phone@guardian.edubridge.local';
+    final user = normalizeUsername(usernameOrPhone);
+    return '$user@guardian.edubridge.local';
   }
 
-  static String studentInternalEmail(String normalizedStudentCode) {
-    final code = normalizeStudentCode(normalizedStudentCode);
-    return '$code@student.edubridge.local';
+  static String studentInternalEmail(String usernameOrCode) {
+    final code = normalizeStudentCode(usernameOrCode);
+    if (code.isNotEmpty) return '$code@student.edubridge.local';
+    final user = normalizeUsername(usernameOrCode);
+    return '$user@student.edubridge.local';
   }
 
   static String adminInternalEmail(String normalizedUsername) {
@@ -210,7 +217,21 @@ class FirebaseAuthService {
     return '$username@admin.edubridge.local';
   }
 
-  @visibleForTesting
+  /// Maps a 4-digit learner PIN to a Firebase Auth password that meets
+  /// [meetsAdminTeacherPasswordPolicy] (PIN alone is too short for Firebase).
+  static String firebaseSecretFromPin(String pin) {
+    final digits = pin.trim();
+    return 'EbPin${digits}A9!';
+  }
+
+  /// Bootstrap Firebase password for pending student/guardian accounts
+  /// (before PIN activation). Deterministic from local account id.
+  static String firebaseSecretFromAccountId(String accountId) {
+    final bare = accountId.trim().replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    final token = bare.isEmpty ? 'user' : bare;
+    return 'EbPend${token}A9!';
+  }
+
   static String messageForAuthCode(String code) {
     switch (code) {
       case 'email-already-in-use':

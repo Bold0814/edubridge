@@ -15,7 +15,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'edubridge.db';
-  static const _dbVersion = 21;
+  static const _dbVersion = 24;
 
   /// Default school for single-school installs and migrated data.
   static const defaultSchoolId = 'sch-default';
@@ -160,6 +160,15 @@ class DatabaseService {
     if (oldVersion < 21) {
       await _migrateRecordOwnershipV21(db);
     }
+    if (oldVersion < 22) {
+      await _migrateAuditLogV22(db);
+    }
+    if (oldVersion < 23) {
+      await _migrateGradeOwnershipColumnsV23(db);
+    }
+    if (oldVersion < 24) {
+      await _migrateUserAccountAuthUidV24(db);
+    }
   }
 
   /// Create schema as of version 3 (for migration tests).
@@ -298,6 +307,9 @@ class DatabaseService {
         term TEXT NOT NULL,
         letter_grade TEXT,
         grade_date TEXT,
+        school_id TEXT,
+        subject_id INTEGER,
+        teacher_id TEXT,
         created_by_uid TEXT,
         updated_by_uid TEXT,
         FOREIGN KEY (class_name) REFERENCES classes(name)
@@ -351,6 +363,7 @@ class DatabaseService {
     await _createSchoolContextTables(db);
     await _createStabilizationV13Tables(db);
     await _createLessonOccurrencesTable(db);
+    await _createAuditLogTable(db);
     await _insertDefaultSchool(db);
 
     const classNames = [
@@ -573,6 +586,7 @@ class DatabaseService {
         teacher_id TEXT,
         guardian_id TEXT,
         student_id TEXT,
+        auth_uid TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
         account_status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT NOT NULL,
@@ -1239,6 +1253,65 @@ class DatabaseService {
 
     await add('ALTER TABLE attendance ADD COLUMN created_by_uid TEXT');
     await add('ALTER TABLE attendance ADD COLUMN updated_by_uid TEXT');
+  }
+
+  Future<void> _createAuditLogTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY,
+        school_id TEXT NOT NULL,
+        class_id TEXT,
+        subject_id INTEGER,
+        student_id TEXT,
+        teacher_id TEXT,
+        teacher_name TEXT,
+        role TEXT,
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        old_value TEXT,
+        new_value TEXT,
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_audit_logs_school_created '
+      'ON audit_logs(school_id, created_at)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_audit_logs_class '
+      'ON audit_logs(school_id, class_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_audit_logs_teacher '
+      'ON audit_logs(school_id, teacher_id)',
+    );
+  }
+
+  Future<void> _migrateAuditLogV22(Database db) async {
+    await _createAuditLogTable(db);
+  }
+
+  Future<void> _migrateGradeOwnershipColumnsV23(Database db) async {
+    Future<void> add(String sql) async {
+      try {
+        await db.execute(sql);
+      } catch (_) {
+        // Column may already exist on partially migrated DBs.
+      }
+    }
+
+    await add('ALTER TABLE grades ADD COLUMN school_id TEXT');
+    await add('ALTER TABLE grades ADD COLUMN subject_id INTEGER');
+    await add('ALTER TABLE grades ADD COLUMN teacher_id TEXT');
+  }
+
+  Future<void> _migrateUserAccountAuthUidV24(Database db) async {
+    try {
+      await db.execute('ALTER TABLE user_accounts ADD COLUMN auth_uid TEXT');
+    } catch (_) {
+      // Column may already exist on partially migrated DBs.
+    }
   }
 }
 

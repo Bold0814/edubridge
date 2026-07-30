@@ -103,6 +103,17 @@ class Grade {
     return letterFromScore(value);
   }
 
+  /// True when [score] is a real entered value (not blank / placeholder).
+  ///
+  /// Blank or non-numeric scores are treated as "no grade yet" so the next
+  /// save is a CREATE/claim, not an ownership-gated UPDATE.
+  static bool hasEnteredScore(Grade grade) {
+    final raw = grade.score.trim();
+    if (raw.isEmpty) return false;
+    final value = num.tryParse(raw);
+    return value != null && value >= 0 && value <= 100;
+  }
+
   /// Validates a numeric score in 0–100. Throws [ArgumentError] if invalid.
   static num parseAndValidateScore(String scoreText) {
     final value = num.tryParse(scoreText.trim());

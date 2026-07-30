@@ -92,9 +92,9 @@ void main() {
   });
 
   test('older event note is not overwritten by a later change', () async {
+    AppClock.debugSetNow(() => DateTime(2026, 7, 29, 8, 0));
     final today = AppClock.todayKey();
 
-    AppClock.debugSetNow(() => DateTime(2026, 7, 29, 8, 0));
     await store.saveAttendance(
       AttendanceRecord.detailed(
         id: 'a',

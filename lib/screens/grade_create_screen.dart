@@ -186,7 +186,7 @@ class _GradeCreateScreenState extends State<GradeCreateScreen> {
     try {
       final saved = await widget.store.saveGrade(
         draft,
-        isUpdate: existing != null,
+        isUpdate: existing != null && Grade.hasEnteredScore(existing),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

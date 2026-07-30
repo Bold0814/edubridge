@@ -38,7 +38,9 @@ class GuardianHomeScreen extends StatelessWidget {
           backgroundColor: const Color(0xFFEEF4FA),
           appBar: AppBar(
             title: const Text('Асран хамгаалагч'),
-            actions: [SessionMenuButton(store: store)],
+            actions: [
+              SessionMenuButton(store: store),
+            ],
           ),
           body: students.isEmpty
               ? Center(

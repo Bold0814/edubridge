@@ -5,6 +5,7 @@ import '../state/app_store.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../widgets/edubridge_logo.dart';
+import 'admin/audit_log_screen.dart';
 import 'auth/change_password_screen.dart';
 import 'home_screen.dart';
 import 'school/school_selection_screen.dart';
@@ -214,6 +215,25 @@ class TeacherWorkspaceScreen extends StatelessWidget {
                     },
                   ),
                 ),
+                if (store.canViewAuditLogs) ...[
+                  const SizedBox(height: AppSpacing.item),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.history_outlined),
+                      title: const Text('Үйлдлийн түүх'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                AuditLogScreen(store: store),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.sectionSm),
                 Text('Анги удирдсан', style: theme.textTheme.titleSmall),
                 const SizedBox(height: AppSpacing.item),

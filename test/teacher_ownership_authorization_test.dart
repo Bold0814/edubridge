@@ -403,7 +403,16 @@ void main() {
 
     setUp(() async {
       database = await DatabaseService.instance.openInMemoryForTest();
-      store = AppStore(EduBridgeRepository(database));
+      store = AppStore(
+        EduBridgeRepository(database),
+        cloudAuthProvisionOverride: (request) async {
+          final email = request.internalEmail;
+          if (email.contains('99110001')) return 'firebase-a';
+          if (email.contains('99110002')) return 'firebase-b';
+          if (email.contains('99110003')) return 'firebase-h';
+          return 'firebase-${request.role.wireValue}';
+        },
+      );
       await store.load();
 
       await store.createSchool(

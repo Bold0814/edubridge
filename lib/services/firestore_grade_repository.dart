@@ -176,7 +176,12 @@ class FirestoreGradeRepository implements GradeRepository {
       throw const GradeSaveException(Grade.missingTeacherIdMessage);
     }
     final path = pathFor(id);
-    final existing = await _store.get(path);
+    Map<String, dynamic>? existing;
+    try {
+      existing = await _store.get(path);
+    } catch (_) {
+      existing = null;
+    }
     if (existing != null) {
       throw StateError('Grade document already exists: $path');
     }
@@ -195,7 +200,12 @@ class FirestoreGradeRepository implements GradeRepository {
       throw ArgumentError.value(grade.id, 'id', 'Grade id must not be empty');
     }
     final path = pathFor(id);
-    final existing = await _store.get(path);
+    Map<String, dynamic>? existing;
+    try {
+      existing = await _store.get(path);
+    } catch (_) {
+      existing = null;
+    }
     if (existing == null) {
       throw StateError('Grade document not found for update: $path');
     }

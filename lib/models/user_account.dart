@@ -11,6 +11,7 @@ class UserAccount {
     this.teacherId,
     this.guardianId,
     this.studentId,
+    this.authUid,
     this.isActive = true,
     this.status = AccountStatus.active,
     required this.createdAt,
@@ -29,6 +30,9 @@ class UserAccount {
   final String? teacherId;
   final String? guardianId;
   final String? studentId;
+
+  /// Firebase Authentication UID for cloud identity and ownership checks.
+  final String? authUid;
   final bool isActive;
   final AccountStatus status;
   final DateTime createdAt;
@@ -63,6 +67,7 @@ class UserAccount {
     String? teacherId,
     String? guardianId,
     String? studentId,
+    String? authUid,
     bool? isActive,
     AccountStatus? status,
     int? failedPinAttempts,
@@ -71,6 +76,7 @@ class UserAccount {
     bool clearTeacherId = false,
     bool clearGuardianId = false,
     bool clearStudentId = false,
+    bool clearAuthUid = false,
     bool clearPinLockedUntil = false,
   }) {
     return UserAccount(
@@ -81,6 +87,7 @@ class UserAccount {
       teacherId: clearTeacherId ? null : (teacherId ?? this.teacherId),
       guardianId: clearGuardianId ? null : (guardianId ?? this.guardianId),
       studentId: clearStudentId ? null : (studentId ?? this.studentId),
+      authUid: clearAuthUid ? null : (authUid ?? this.authUid),
       isActive: isActive ?? this.isActive,
       status: status ?? this.status,
       createdAt: createdAt,

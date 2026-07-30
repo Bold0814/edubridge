@@ -136,9 +136,11 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
       );
       if (grades.isEmpty) continue;
       final existing = grades.first;
-      final score = existing.score;
-      _initialScores[student.id] = score;
+      // Keep id for upsert, but blank/placeholder scores are CREATE not UPDATE.
       _existingGradeIds[student.id] = existing.id;
+      if (!Grade.hasEnteredScore(existing)) continue;
+      final score = existing.score.trim();
+      _initialScores[student.id] = score;
       final controller = _scoreControllers[student.id];
       if (controller != null && controller.text.isEmpty) {
         controller.text = score;
@@ -236,6 +238,20 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
       if (scoreText == initial) continue;
 
       final existingId = _existingGradeIds[student.id];
+      Grade? existingGrade;
+      if (existingId != null) {
+        for (final g in widget.store.gradesForStudentContext(
+          className: widget.selectedClass,
+          studentId: student.id,
+          subjectName: _selectedSubject,
+          term: _selectedTerm,
+        )) {
+          if (g.id == existingId) {
+            existingGrade = g;
+            break;
+          }
+        }
+      }
       drafts.add((
         grade: Grade(
           id: existingId ?? widget.store.nextGradeId(),
@@ -249,7 +265,9 @@ class _BulkGradeEntryScreenState extends State<BulkGradeEntryScreen> {
           termId: _selectedTerm!,
           letterGrade: Grade.letterFromScore(score),
         ),
-        isUpdate: existingId != null,
+        // Only scored existing rows are updates; blank shells are create/claim.
+        isUpdate:
+            existingGrade != null && Grade.hasEnteredScore(existingGrade),
       ));
     }
 

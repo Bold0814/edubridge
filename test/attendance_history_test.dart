@@ -37,10 +37,10 @@ void main() {
   test(
     'changing attendance appends history; today shows latest only',
     () async {
+      AppClock.debugSetNow(() => DateTime(2026, 7, 29, 8, 0));
       final today = AppClock.todayKey();
       const subjectId = 42;
 
-      AppClock.debugSetNow(() => DateTime(2026, 7, 29, 8, 0));
       await store.saveAttendance(
         AttendanceRecord.detailed(
           id: 'ignored-1',
@@ -95,8 +95,8 @@ void main() {
   );
 
   test('identical re-save does not create duplicate history', () async {
-    final today = AppClock.todayKey();
     AppClock.debugSetNow(() => DateTime(2026, 7, 29, 9, 0));
+    final today = AppClock.todayKey();
 
     final first = await store.saveAttendance(
       AttendanceRecord.detailed(
