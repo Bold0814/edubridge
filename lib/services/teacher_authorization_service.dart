@@ -1,13 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 /// Record kinds managed by [TeacherAuthorizationService].
-enum TeacherRecordKind {
-  advice,
-  attendance,
-  grade,
-  announcement,
-  homework,
-}
+enum TeacherRecordKind { advice, attendance, grade, announcement, homework }
 
 /// Stable ownership + scope snapshot for a persisted school record.
 class RecordOwnership {
@@ -101,30 +95,39 @@ class TeacherAuthorizationService {
     final active = schoolId?.trim();
     if (active == null || active.isEmpty) return false;
     final record = recordSchoolId?.trim();
-    if (record == null || record.isEmpty) return true; // legacy: treat as active
+    if (record == null || record.isEmpty) {
+      return true; // legacy: treat as active
+    }
     return record == active;
   }
 
-  /// Owner by Firebase uid or teacher document id.
+  /// Owner by Firebase uid and/or teacher document id.
+  ///
+  /// Matches Firestore grade rules: `createdByUid == auth.uid` OR
+  /// `teachers/{teacherId}.authUid == auth.uid` (via teacher document id).
+  /// Both checks are OR'd so an assigned teacher can edit subject grades that
+  /// an admin stamped with a different createdByUid but the correct teacherId.
   bool isRecordOwner(RecordOwnership ownership) {
     if (isAdmin) return false; // admin path is separate; not "owner"
     final uid = authUid?.trim();
     final recordUid = ownership.createdByUid?.trim();
-    if (uid != null &&
+    final uidMatch =
+        uid != null &&
         uid.isNotEmpty &&
         recordUid != null &&
-        recordUid.isNotEmpty) {
-      return uid == recordUid;
-    }
+        recordUid.isNotEmpty &&
+        uid == recordUid;
+
     final tid = teacherDocId?.trim();
     final recordTid = ownership.createdByTeacherId?.trim();
-    if (tid != null &&
+    final teacherMatch =
+        tid != null &&
         tid.isNotEmpty &&
         recordTid != null &&
-        recordTid.isNotEmpty) {
-      return tid == recordTid;
-    }
-    return false;
+        recordTid.isNotEmpty &&
+        tid == recordTid;
+
+    return uidMatch || teacherMatch;
   }
 
   bool canViewClass(String classId) {

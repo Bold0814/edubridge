@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
@@ -33,7 +34,10 @@ Future<void> main() async {
     firestoreStaff: FirestoreStaffRepository(store: firestoreDocs),
   );
   await store.load();
-  await store.ensureDemoAccountsIfNeeded();
+  // Demo/seed accounts must never provision in release builds.
+  if (kDebugMode) {
+    await store.ensureDemoAccountsIfNeeded();
+  }
   // Backfill Firebase Auth + Firestore authUid for any legacy local accounts.
   await store.ensureCloudAuthForAccountsMissingUid();
 

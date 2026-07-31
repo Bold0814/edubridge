@@ -69,12 +69,11 @@ void main() {
     expect(account.authUid, startsWith('uid-teacher-'));
     expect(store.teacherById(teacher.id)!.authUid, account.authUid);
 
-    final profilePath =
-        'users/${account.authUid}';
+    final profilePath = 'users/${account.authUid}';
     expect(identityStore.documents.containsKey(profilePath), isTrue);
   });
 
-  test('student+guardian create stores authUid before PIN activation', () async {
+  test('student+guardian get authUid on PIN activation', () async {
     await store.addSchoolClass(name: classId);
     final student = await store.addStudentWithRequiredGuardian(
       student: Student(
@@ -90,13 +89,16 @@ void main() {
     );
 
     final studentAccount = store.accountForStudentId(student.id)!;
-    expect(studentAccount.authUid, isNotNull);
-    expect(studentAccount.authUid, isNotEmpty);
-
+    expect(studentAccount.authUid, isNull);
     final guardian = store.guardiansForStudent(student.id).first;
     final guardianAccount = store.accountForGuardianId(guardian.id)!;
-    expect(guardianAccount.authUid, isNotNull);
-    expect(guardianAccount.authUid, isNotEmpty);
+    expect(guardianAccount.authUid, isNull);
+
+    await store.activateAccountWithPin(userId: studentAccount.id, pin: '2468');
+    await store.activateAccountWithPin(userId: guardianAccount.id, pin: '1357');
+
+    expect(store.accountForStudentId(student.id)!.authUid, isNotNull);
+    expect(store.accountForGuardianId(guardian.id)!.authUid, isNotNull);
   });
 
   test('teacher login links authUid for ownership', () async {

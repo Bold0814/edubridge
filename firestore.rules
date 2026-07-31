@@ -211,10 +211,35 @@ service cloud.firestore {
         resource.data.uid == request.auth.uid
         || isSchoolAdmin(resource.data.schoolId)
       );
-      // New user may create own membership; school admin may provision others.
-      allow create, update: if signedIn() && (
-        request.resource.data.uid == request.auth.uid
-        || isSchoolAdmin(request.resource.data.schoolId)
+      // Self-create: non-admin roles always OK. schoolAdmin only for the
+      // school's creator / first-admin bootstrap (blocks joining another
+      // school as admin). Existing admins may provision others.
+      allow create: if signedIn() && (
+        isSchoolAdmin(request.resource.data.schoolId)
+        || (
+          request.resource.data.uid == request.auth.uid
+          && request.resource.data.role in ['teacher', 'student', 'guardian']
+          && request.resource.data.status in ['active', 'pendingActivation']
+        )
+        || (
+          request.resource.data.uid == request.auth.uid
+          && request.resource.data.role == 'schoolAdmin'
+          && request.resource.data.status == 'active'
+          && (
+            !exists(/databases/$(database)/documents/schools/$(request.resource.data.schoolId))
+            || get(/databases/$(database)/documents/schools/$(request.resource.data.schoolId)).data.createdByUid
+                 == request.auth.uid
+          )
+        )
+      );
+      allow update: if signedIn() && (
+        isSchoolAdmin(request.resource.data.schoolId)
+        || (
+          request.resource.data.uid == request.auth.uid
+          && resource.data.uid == request.auth.uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.schoolId == resource.data.schoolId
+        )
       );
     }
 
