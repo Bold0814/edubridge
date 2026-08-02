@@ -1217,32 +1217,46 @@ class EduBridgeRepository {
     required int sortOrder,
     required String schoolId,
   }) async {
-    final id = await _db.insert('subjects', {
-      'name': name,
-      'school_id': schoolId,
-      'sort_order': sortOrder,
-      'is_active': 1,
-    });
-    return Subject(
-      id: id,
-      name: name,
-      schoolId: schoolId,
-      sortOrder: sortOrder,
-    );
+    try {
+      final id = await _db.insert('subjects', {
+        'name': name,
+        'school_id': schoolId,
+        'sort_order': sortOrder,
+        'is_active': 1,
+      });
+      return Subject(
+        id: id,
+        name: name,
+        schoolId: schoolId,
+        sortOrder: sortOrder,
+      );
+    } on DatabaseException catch (e) {
+      if (e.isUniqueConstraintError()) {
+        throw ArgumentError('DUPLICATE');
+      }
+      rethrow;
+    }
   }
 
   Future<void> updateSubject(Subject subject) async {
-    await _db.update(
-      'subjects',
-      {
-        'name': subject.name,
-        'school_id': subject.schoolId,
-        'sort_order': subject.sortOrder,
-        'is_active': subject.isActive ? 1 : 0,
-      },
-      where: 'id = ?',
-      whereArgs: [subject.id],
-    );
+    try {
+      await _db.update(
+        'subjects',
+        {
+          'name': subject.name,
+          'school_id': subject.schoolId,
+          'sort_order': subject.sortOrder,
+          'is_active': subject.isActive ? 1 : 0,
+        },
+        where: 'id = ?',
+        whereArgs: [subject.id],
+      );
+    } on DatabaseException catch (e) {
+      if (e.isUniqueConstraintError()) {
+        throw ArgumentError('DUPLICATE');
+      }
+      rethrow;
+    }
   }
 
   Future<void> updateSubjectName({

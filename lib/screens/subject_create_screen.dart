@@ -1,3 +1,4 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import '../state/app_store.dart';
@@ -24,6 +25,31 @@ class _SubjectCreateScreenState extends State<SubjectCreateScreen> {
     super.dispose();
   }
 
+  String _messageForError(Object error) {
+    if (error is PermissionDeniedException) {
+      return 'Танд энэ хичээлийг нэмэх эрх алга. Админ бүртгэлээ шалгана уу.';
+    }
+    if (error is ArgumentError) {
+      return switch (error.message) {
+        'EMPTY' => 'Хичээлийн нэрээ оруулна уу',
+        'DUPLICATE' => 'Ийм нэртэй хичээл өмнө нь бүртгэгдсэн байна.',
+        'UNAUTHENTICATED' =>
+          'Нэвтрэх хугацаа дууссан байна. Дахин нэвтэрнэ үү.',
+        _ => 'Хадгалах үед алдаа гарлаа.',
+      };
+    }
+    if (error is FirebaseException) {
+      final code = error.code.toLowerCase();
+      if (code == 'permission-denied') {
+        return 'Танд энэ хичээлийг нэмэх эрх алга. Админ бүртгэлээ шалгана уу.';
+      }
+      if (code == 'unauthenticated') {
+        return 'Нэвтрэх хугацаа дууссан байна. Дахин нэвтэрнэ үү.';
+      }
+    }
+    return 'Хадгалах үед алдаа гарлаа.';
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     final name = _nameController.text.trim();
@@ -38,23 +64,23 @@ class _SubjectCreateScreenState extends State<SubjectCreateScreen> {
       await widget.store.addSubject(name);
       if (!mounted) return;
       Navigator.of(context).pop(true);
-    } on ArgumentError catch (e) {
+    } catch (e) {
+      debugPrint(
+        'SubjectCreateScreen save error=$e '
+        'schoolId=${widget.store.activeSchoolId} '
+        'authUid=${widget.store.authenticatedUser?.authUid}',
+      );
+      if (e is FirebaseException) {
+        debugPrint(
+          'SubjectCreateScreen FirebaseException code=${e.code} '
+          'message=${e.message}',
+        );
+      }
       if (!mounted) return;
       setState(() => _saving = false);
-      final message = switch (e.message) {
-        'EMPTY' => 'Хичээлийн нэрээ оруулна уу',
-        'DUPLICATE' => 'Ийм хичээл аль хэдийн байна.',
-        _ => 'Хадгалах үед алдаа гарлаа.',
-      };
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Хадгалах үед алдаа гарлаа.')),
-      );
+      ).showSnackBar(SnackBar(content: Text(_messageForError(e))));
     }
   }
 

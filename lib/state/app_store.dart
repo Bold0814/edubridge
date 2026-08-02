@@ -4329,25 +4329,47 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addSubject(String rawName) async {
-    _ensureCanManageSchoolStructure();
-    final name = rawName.trim();
-    if (name.isEmpty) {
-      throw ArgumentError('EMPTY');
-    }
     final schoolId = _effectiveSchoolId;
-    if (_subjectModels.any(
-      (s) =>
-          s.schoolId == schoolId && s.name.toLowerCase() == name.toLowerCase(),
-    )) {
-      throw ArgumentError('DUPLICATE');
+    final authUid = _currentAuthUid;
+    try {
+      _ensureCanManageSchoolStructure();
+      if (_isFirebaseAppReady &&
+          (authUid == null || authUid.isEmpty) &&
+          (_activeContext.userId ?? _selectedDevUserId) != null) {
+        throw ArgumentError('UNAUTHENTICATED');
+      }
+      final name = rawName.trim();
+      if (name.isEmpty) {
+        throw ArgumentError('EMPTY');
+      }
+      if (_subjectModels.any(
+        (s) =>
+            s.schoolId == schoolId &&
+            s.name.toLowerCase() == name.toLowerCase(),
+      )) {
+        throw ArgumentError('DUPLICATE');
+      }
+      // Subjects are local SQLite only (no Firestore subjects collection).
+      // Path logged for device diagnostics: subjects table / school scope.
+      final created = await _repository.insertSubject(
+        name,
+        sortOrder: allSubjects.length,
+        schoolId: schoolId,
+      );
+      _subjectModels = [..._subjectModels, created];
+      notifyListeners();
+    } catch (e) {
+      debugPrint(
+        'addSubject failed schoolId=$schoolId authUid=${authUid ?? '(none)'} '
+        'path=sqlite:subjects/$schoolId error=$e',
+      );
+      if (e is FirebaseException) {
+        debugPrint(
+          'addSubject FirebaseException code=${e.code} message=${e.message}',
+        );
+      }
+      rethrow;
     }
-    final created = await _repository.insertSubject(
-      name,
-      sortOrder: allSubjects.length,
-      schoolId: schoolId,
-    );
-    _subjectModels = [..._subjectModels, created];
-    notifyListeners();
   }
 
   /// Reloads subject models from SQLite (active school filtering stays in getters).

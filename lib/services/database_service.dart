@@ -15,7 +15,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'edubridge.db';
-  static const _dbVersion = 24;
+  static const _dbVersion = 25;
 
   /// Default school for single-school installs and migrated data.
   static const defaultSchoolId = 'sch-default';
@@ -168,6 +168,9 @@ class DatabaseService {
     }
     if (oldVersion < 24) {
       await _migrateUserAccountAuthUidV24(db);
+    }
+    if (oldVersion < 25) {
+      await _migrateSubjectsSchoolScopedUniqueV25(db);
     }
   }
 
@@ -409,10 +412,11 @@ class DatabaseService {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS subjects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         school_id TEXT NOT NULL DEFAULT '$defaultSchoolId',
         sort_order INTEGER NOT NULL DEFAULT 0,
-        is_active INTEGER NOT NULL DEFAULT 1
+        is_active INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(school_id, name)
       )
     ''');
 
@@ -1159,10 +1163,7 @@ class DatabaseService {
       }
       await db.update(
         'classes',
-        {
-          'grade_level': parsed.$1,
-          'section': parsed.$2,
-        },
+        {'grade_level': parsed.$1, 'section': parsed.$2},
         where: 'name = ?',
         whereArgs: [name],
       );
@@ -1312,6 +1313,27 @@ class DatabaseService {
     } catch (_) {
       // Column may already exist on partially migrated DBs.
     }
+  }
+
+  /// Subjects must be unique per school, not globally (multi-school catalogs).
+  Future<void> _migrateSubjectsSchoolScopedUniqueV25(Database db) async {
+    await db.execute('''
+      CREATE TABLE subjects_v25 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        school_id TEXT NOT NULL DEFAULT '$defaultSchoolId',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(school_id, name)
+      )
+    ''');
+    await db.execute('''
+      INSERT INTO subjects_v25 (id, name, school_id, sort_order, is_active)
+      SELECT id, name, COALESCE(school_id, '$defaultSchoolId'), sort_order, is_active
+      FROM subjects
+    ''');
+    await db.execute('DROP TABLE subjects');
+    await db.execute('ALTER TABLE subjects_v25 RENAME TO subjects');
   }
 }
 

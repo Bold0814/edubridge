@@ -62,7 +62,8 @@ class SubjectsSettingsScreen extends StatelessWidget {
   void _showError(BuildContext context, String? code) {
     final message = switch (code) {
       'EMPTY' => 'Хичээлийн нэрээ оруулна уу',
-      'DUPLICATE' => 'Ийм хичээл аль хэдийн байна.',
+      'DUPLICATE' => 'Ийм нэртэй хичээл өмнө нь бүртгэгдсэн байна.',
+      'UNAUTHENTICATED' => 'Нэвтрэх хугацаа дууссан байна. Дахин нэвтэрнэ үү.',
       _ => 'Хадгалах үед алдаа гарлаа.',
     };
     ScaffoldMessenger.of(
